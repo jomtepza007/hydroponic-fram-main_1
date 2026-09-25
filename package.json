@@ -1,0 +1,13 @@
+{
+  "name": "webappwork",
+  "version": "1.0.0",
+  "description": "Hydroponic Preorder System - Full Stack",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names \"FRONTEND,BACKEND\" --prefix-colors \"cyan,yellow\" \"npm run dev --prefix frontend\" \"npm run dev --prefix backend\"",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "npm run dev --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
