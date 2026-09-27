@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Camera, ChevronRight, Mail, Phone } from 'lucide-react'
+import { Camera, ChevronRight, History, Mail, Phone } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
 import { getAllOrders, updateOrderStatus } from '../../api/orders'
@@ -13,9 +13,10 @@ import {
 } from '../../utils/dateUtils'
 import toast from 'react-hot-toast'
 
-const STATUSES = ['', 'pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed', 'cancelled']
+// ไม่รวม completed/cancelled ในรายการหลัก — ดูได้ที่หน้าประวัติ
+const STATUSES = ['', 'waiting_cycle', 'pending', 'confirmed', 'seeding', 'growing', 'ready']
 const LABELS = {
-  '': 'ทั้งหมด', pending: 'รอดำเนินการ', confirmed: 'ยืนยัน', seeding: 'เพาะเมล็ด',
+  '': 'ทั้งหมด', waiting_cycle: 'รอสร้างรอบปลูก', pending: 'รอดำเนินการ', confirmed: 'ยืนยัน', seeding: 'เพาะเมล็ด',
   growing: 'ลงราง', ready: 'พร้อมส่ง', completed: 'เสร็จสิ้น', cancelled: 'ยกเลิก'
 }
 
@@ -27,7 +28,11 @@ export default function AdminOrders() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    try { const d = await getAllOrders(); setOrders(d || []) }
+    try {
+      const d = await getAllOrders()
+      // กรองเฉพาะที่ยังไม่เสร็จสิ้น
+      setOrders((d || []).filter(o => o.status !== 'completed' && o.status !== 'cancelled'))
+    }
     catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -47,8 +52,19 @@ export default function AdminOrders() {
       <Sidebar />
       <main className="ml-64 flex-1 p-8">
         <div className="max-w-6xl mx-auto">
-          <h1 className="page-title mb-2">จัดการออเดอร์ทั้งหมด</h1>
-          <p className="page-subtitle mb-6">ดูและอัปเดตสถานะออเดอร์ทั้งระบบ</p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
+            <div>
+              <h1 className="page-title">จัดการออเดอร์ทั้งหมด</h1>
+              <p className="page-subtitle">ออเดอร์ที่กำลังดำเนินการอยู่</p>
+            </div>
+            <Link
+              to="/admin/order-history"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm"
+            >
+              <History className="w-4 h-4" />
+              ประวัติการสั่งซื้อ
+            </Link>
+          </div>
 
           <div className="flex gap-2 flex-wrap mb-6">
             {STATUSES.map(s => (
@@ -107,15 +123,24 @@ export default function AdminOrders() {
                       <td className="font-semibold text-forest">฿{Number(o.total_amount).toLocaleString()}</td>
                       <td><OrderStatusBadge status={o.status} isEquipment={isEquipmentOrder(o)} /></td>
                       <td>
-                        <select
-                          onChange={e => handleStatus(o.id, e.target.value)}
-                          value={o.status}
-                          className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white cursor-pointer"
-                        >
-                          {['pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed', 'cancelled'].map(s => (
-                            <option key={s} value={s}>{LABELS[s]}</option>
-                          ))}
-                        </select>
+                        {o.status === 'waiting_cycle' ? (
+                          // ล็อกไม่ให้เปลี่ยนสถานะ — ต้องไปยืนยันสร้างรอบปลูกก่อน
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs px-2 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-medium">
+                              🌱 ยืนยันรอบปลูกก่อน
+                            </span>
+                          </div>
+                        ) : (
+                          <select
+                            onChange={e => handleStatus(o.id, e.target.value)}
+                            value={o.status}
+                            className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white cursor-pointer"
+                          >
+                            {['pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed', 'cancelled'].map(s => (
+                              <option key={s} value={s}>{LABELS[s]}</option>
+                            ))}
+                          </select>
+                        )}
                       </td>
                       <td>
                         <Link

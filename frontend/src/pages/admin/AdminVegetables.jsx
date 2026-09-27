@@ -52,7 +52,20 @@ export default function AdminVegetables() {
   }
 
   function openEdit(veg) {
-    setForm({ ...veg })
+    setForm({
+      name: veg.name || '',
+      description: veg.description || '',
+      price_per_kg: veg.price_per_kg !== undefined ? veg.price_per_kg : '',
+      unit: veg.unit || 'กก.',
+      harvest_days: veg.harvest_days || 30,
+      germination_days: veg.germination_days || 7,
+      transfer_days: veg.transfer_days || 14,
+      slots_per_kg: veg.slots_per_kg || 4,
+      category: veg.category || 'vegetable',
+      image_url: veg.image_url || '',
+      is_active: veg.is_active !== undefined ? veg.is_active : true,
+      resource_id: veg.resource_id || '',
+    })
     setEditingId(veg.id)
     setShowForm(true)
   }
@@ -118,17 +131,33 @@ export default function AdminVegetables() {
     e.preventDefault()
     setSaving(true)
     try {
+      const payload = {
+        name: form.name?.trim(),
+        description: form.description?.trim() || null,
+        price_per_kg: Number(form.price_per_kg) || 0,
+        unit: form.unit || 'กก.',
+        category: form.category || 'vegetable',
+        image_url: form.image_url || null,
+        is_active: form.is_active !== undefined ? Boolean(form.is_active) : true,
+        harvest_days: form.category === 'vegetable' ? (Number(form.harvest_days) || 30) : null,
+        germination_days: form.category === 'vegetable' ? (Number(form.germination_days) || 7) : null,
+        transfer_days: form.category === 'vegetable' ? (Number(form.transfer_days) || 14) : null,
+        slots_per_kg: form.category === 'vegetable' ? (Number(form.slots_per_kg) || 4) : 0,
+        resource_id: form.category === 'equipment' ? (form.resource_id || null) : null,
+      }
+
       if (editingId) {
-        await updateVegetable(editingId, form)
-        toast.success('แก้ไขสินค้าสำเร็จ')
+        await updateVegetable(editingId, payload)
+        toast.success('แก้ไขสินค้าสำเร็จ ✅')
       } else {
-        await createVegetable(form)
+        await createVegetable(payload)
         toast.success('เพิ่มสินค้าสำเร็จ 🌱')
       }
       setShowForm(false)
       await loadVegetables()
     } catch (err) {
-      toast.error('เกิดข้อผิดพลาดในการบันทึก')
+      console.error('Save vegetable error:', err)
+      toast.error(err.message || 'เกิดข้อผิดพลาดในการบันทึก')
     } finally {
       setSaving(false)
     }

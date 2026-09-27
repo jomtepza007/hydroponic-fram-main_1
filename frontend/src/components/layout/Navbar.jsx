@@ -76,8 +76,8 @@ export default function Navbar() {
                   </Link>
                 )}
 
-                {/* Cart icon — แสดงเฉพาะ customer */}
-                {!isAdmin && !isFarmer && (
+                {/* Cart icon — แสดงสำหรับ customer และ admin */}
+                {!isFarmer && (
                   <Link
                     to="/cart"
                     className="relative p-2 rounded-lg text-gray-500 hover:text-forest hover:bg-primary-50 transition-all"

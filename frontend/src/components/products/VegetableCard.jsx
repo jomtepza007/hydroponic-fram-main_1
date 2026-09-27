@@ -1,11 +1,22 @@
 import { Link } from 'react-router-dom'
-import { Clock, Leaf, ShoppingBag } from 'lucide-react'
+import { Clock, Leaf, ShoppingCart } from 'lucide-react'
+import { useCart } from '../../context/CartContext'
+import toast from 'react-hot-toast'
 
 /**
  * VegetableCard — แสดงการ์ดผัก/อุปกรณ์
  */
 export default function VegetableCard({ vegetable }) {
   const { id, name, description, image_url, price_per_kg, unit, harvest_days, category } = vegetable
+  const { addToCart } = useCart()
+
+  function handleQuickAdd(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    const qty = category === 'vegetable' ? 1.0 : 1
+    addToCart(vegetable, qty)
+    toast.success(`เพิ่ม ${name} ${qty} ${unit} ลงตะกร้าแล้ว 🌱`, { duration: 2500 })
+  }
 
   return (
     <Link to={`/products/${id}`} className="card-hover group block">
@@ -50,11 +61,22 @@ export default function VegetableCard({ vegetable }) {
         )}
       </div>
 
-      {/* Order Button hint */}
-      <div className="mt-3 flex items-center gap-1.5 text-xs font-medium text-forest opacity-0 group-hover:opacity-100 transition-all duration-200">
-        <ShoppingBag className="w-3.5 h-3.5" />
-        สั่งจองล่วงหน้า
+      {/* Bottom bar with Quick Add */}
+      <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs">
+        <span className="text-gray-500 group-hover:text-forest font-medium transition-colors">
+          {category === 'vegetable' ? 'เลือกปริมาณ (กก.)' : 'ดูรายละเอียด'}
+        </span>
+        <button
+          type="button"
+          onClick={handleQuickAdd}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary-50 text-forest hover:bg-forest hover:text-white transition-all font-medium"
+          title={`เพิ่ม 1 ${unit} ลงตะกร้า`}
+        >
+          <ShoppingCart className="w-3.5 h-3.5" />
+          <span>ใส่ตะกร้า</span>
+        </button>
       </div>
     </Link>
   )
 }
+

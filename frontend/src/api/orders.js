@@ -237,47 +237,57 @@ export async function addPlantingUpdate(plantingCycleId, { status, photo_url, ca
   return data
 }
 
-/** ตรวจสอบ capacity ของแปลงปลูกตามชนิดผักและการใช้งานจริงของออเดอร์ลูกค้า (Real-time Capacity Calculation) */
+/** ตรวจสอบ capacity ของแปลงปลูกตามชนิดผักและการใช้งานจริงของออเดอร์ลูกค้า (อ้างอิงจาก จัดการพื้นที่ปลูก growing_areas) */
 export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays = 35, vegetableTypeId = null) {
   const needed = Number(slotsNeeded) || 0
   const days = Number(harvestDays) || 35
 
-  // 1. ดึงข้อมูลแปลงปลูก (growing_areas) ที่ผูกกับผักชนิดนี้โดยเฉพาะ
-  let totalSlots = 0
-  let areaName = ''
+  const typeIds = Array.isArray(vegetableTypeId)
+    ? vegetableTypeId.filter(Boolean)
+    : vegetableTypeId ? [vegetableTypeId] : []
 
-  if (vegetableTypeId) {
-    const { data: specificAreas } = await supabase
-      .from('growing_areas')
-      .select('id, name, total_slots, vegetable_type_id')
-      .eq('is_active', true)
-      .eq('vegetable_type_id', vegetableTypeId)
+  // 1. ดึงข้อมูลแปลงปลูกที่ active ทั้งหมดจาก จัดการพื้นที่ปลูก (growing_areas)
+  const { data: allActiveAreas, error: areasError } = await supabase
+    .from('growing_areas')
+    .select('id, name, zone_code, total_slots, vegetable_type_id, vegetable_types(id, name)')
+    .eq('is_active', true)
+    .order('name')
 
-    if (specificAreas && specificAreas.length > 0) {
-      totalSlots = specificAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
-      areaName = specificAreas.map(a => a.name).join(', ')
+  if (areasError) console.error('Error fetching growing_areas:', areasError)
+
+  let relevantAreas = []
+
+  if (allActiveAreas && allActiveAreas.length > 0) {
+    if (typeIds.length > 0) {
+      // แปลงที่ผูกกับผักชนิดที่เลือกโดยเฉพาะ
+      const specific = allActiveAreas.filter(a => typeIds.includes(a.vegetable_type_id))
+      if (specific.length > 0) {
+        relevantAreas = specific
+      } else {
+        // ถ้าไม่มีแปลงเฉพาะของผักชนิดนี้ ให้ใช้แปลงทั่วไป (vegetable_type_id is null) หรือทุกแปลงที่ active
+        const general = allActiveAreas.filter(a => !a.vegetable_type_id)
+        relevantAreas = general.length > 0 ? general : allActiveAreas
+      }
+    } else {
+      // ถ้าไม่ได้ระบุชนิดผัก ให้ใช้ทุกแปลงปลูกที่ active ใน จัดการพื้นที่ปลูก
+      relevantAreas = allActiveAreas
     }
   }
 
-  // 2. ถ้าไม่มีแปลงเฉพาะของผักชนิดนี้ ให้ดึงจากแปลงทั่วไป (vegetable_type_id is null) หรือ farm_settings
-  if (!totalSlots || totalSlots <= 0) {
-    const { data: generalAreas } = await supabase
-      .from('growing_areas')
-      .select('id, name, total_slots')
-      .eq('is_active', true)
-      .is('vegetable_type_id', null)
+  let totalSlots = 0
+  let areaName = ''
 
-    if (generalAreas && generalAreas.length > 0) {
-      totalSlots = generalAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
-      areaName = 'แปลงรวมทั่วไป'
-    } else {
-      const { data: settings } = await supabase
-        .from('farm_settings')
-        .select('total_slots')
-        .single()
-      totalSlots = settings?.total_slots || 0
-      areaName = 'ฟาร์มโดยรวม'
-    }
+  if (relevantAreas.length > 0) {
+    totalSlots = relevantAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
+    areaName = relevantAreas.map(a => a.name + (a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : '')).join(', ')
+  } else {
+    // กรณีที่ยังไม่ได้สร้างพื้นที่ปลูกใน จัดการพื้นที่ปลูก เลย ให้ fallback ไปที่ farm_settings
+    const { data: settings } = await supabase
+      .from('farm_settings')
+      .select('total_slots')
+      .single()
+    totalSlots = settings?.total_slots || 0
+    areaName = 'แปลงรวม'
   }
 
   // คำนวณช่วงวันที่ผักออเดอร์นี้จะเติบโตในแปลง
@@ -308,8 +318,8 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
     let orderOverlapped = false
 
     for (const item of order.order_items || []) {
-      // หากมีการระบุ vegetableTypeId ให้คำนวณเฉพาะออเดอร์ที่ปลูกผักชนิดนี้
-      if (vegetableTypeId && item.vegetable_type_id && item.vegetable_type_id !== vegetableTypeId) {
+      // หากมีการระบุ typeIds ให้คำนวณเฉพาะออเดอร์ที่ปลูกผักในกลุ่มนี้
+      if (typeIds.length > 0 && item.vegetable_type_id && !typeIds.includes(item.vegetable_type_id)) {
         continue
       }
 
@@ -328,15 +338,15 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
     if (orderOverlapped) overlappingOrders++
   }
 
-  // 4. รวมรอบปลูก standalone สำหรับผักชนิดนี้
+  // 4. รวมรอบปลูก standalone
   let cycleQuery = supabase
     .from('planting_cycles')
     .select('slots_used, planting_start_date, expected_harvest_date, vegetable_type_id')
     .is('order_item_id', null)
     .not('status', 'in', '("done","cancelled")')
 
-  if (vegetableTypeId) {
-    cycleQuery = cycleQuery.eq('vegetable_type_id', vegetableTypeId)
+  if (typeIds.length > 0) {
+    cycleQuery = cycleQuery.in('vegetable_type_id', typeIds)
   }
 
   const { data: standaloneCycles } = await cycleQuery
@@ -366,6 +376,7 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
     targetStartDate: targetStart.toISOString().split('T')[0],
     targetEndDate: pickupDate,
     areaName: areaName || 'แปลงปลูก',
+    areas: relevantAreas,
   }
 }
 

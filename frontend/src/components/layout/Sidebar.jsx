@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Calendar, ShoppingBag, Package, Users,
-  Settings, BarChart2, Leaf, LogOut, ChevronRight, Boxes, MapPin
+  Settings, BarChart2, Leaf, LogOut, ChevronRight, Boxes, MapPin, History
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { signOut } from '../../api/auth'
@@ -9,7 +9,8 @@ import { signOut } from '../../api/auth'
 const adminLinks = [
   { to: '/admin', icon: LayoutDashboard, label: 'แดชบอร์ด', end: true },
   { to: '/admin/vegetables', icon: Leaf, label: 'จัดการผัก & อุปกรณ์' },
-  { to: '/admin/orders', icon: ShoppingBag, label: 'ออเดอร์ทั้งหมด' },
+  { to: '/admin/orders', icon: ShoppingBag, label: 'รายการออเดอร์' },
+  { to: '/admin/order-history', icon: History, label: 'ประวัติการสั่งซื้อ' },
   { to: '/admin/users', icon: Users, label: 'จัดการผู้ใช้' },
   { to: '/admin/growing-areas', icon: MapPin, label: 'พื้นที่ปลูก' },
   { to: '/admin/resources', icon: Boxes, label: 'ทรัพยากร' },
@@ -22,6 +23,7 @@ const farmerLinks = [
   { to: '/farmer/vegetables', icon: Leaf, label: 'จัดการผัก & อุปกรณ์' },
   { to: '/farmer/schedule', icon: Calendar, label: 'ตารางปลูก' },
   { to: '/farmer/orders', icon: ShoppingBag, label: 'รายการออเดอร์' },
+  { to: '/farmer/order-history', icon: History, label: 'ประวัติการสั่งซื้อ' },
   { to: '/farmer/resources', icon: Package, label: 'สต็อกทรัพยากร' },
 ]
 

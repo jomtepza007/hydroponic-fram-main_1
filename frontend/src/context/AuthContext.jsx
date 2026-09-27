@@ -28,7 +28,11 @@ export function AuthProvider({ children }) {
         } else {
           setUser(null)
           setProfile(null)
-          try { localStorage.removeItem('equipment_cart') } catch {}
+          try {
+            localStorage.removeItem('equipment_cart')
+            localStorage.removeItem('hydro_cart')
+            localStorage.removeItem('hydro_cart_guest')
+          } catch {}
         }
       }
     )

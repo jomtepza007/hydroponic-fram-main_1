@@ -49,6 +49,7 @@ export function getMinPickupDate(harvestDays) {
 
 /** แปลง status เป็นข้อความภาษาไทย (ผัก / ค่าเริ่มต้น) */
 export const ORDER_STATUS_LABELS = {
+  waiting_cycle: 'รอสร้างรอบปลูก',
   pending:   'รอดำเนินการ',
   confirmed: 'ยืนยันแล้ว',
   seeding:   'เพาะเมล็ด',
@@ -60,6 +61,7 @@ export const ORDER_STATUS_LABELS = {
 
 /** แปลง status เป็น badge class */
 export const ORDER_STATUS_CLASSES = {
+  waiting_cycle: 'badge-waiting',
   pending:   'badge-pending',
   confirmed: 'badge-confirmed',
   seeding:   'badge-seeding',
@@ -70,7 +72,7 @@ export const ORDER_STATUS_CLASSES = {
 }
 
 /** ลำดับ status ผัก */
-export const STATUS_FLOW = ['pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed']
+export const STATUS_FLOW = ['waiting_cycle', 'pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed']
 
 /** ลำดับ status หมวดหมู่อุปกรณ์และชุดปลูก (รอดำเนินการ -> ยืนยันแล้ว -> รอจัดส่ง -> จัดส่งแล้ว) */
 export const EQUIPMENT_STATUS_FLOW = ['pending', 'confirmed', 'ready', 'completed']

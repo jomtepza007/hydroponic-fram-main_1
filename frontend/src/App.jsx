@@ -32,6 +32,7 @@ import AdminReports from './pages/admin/AdminReports'
 import ProductDetail from './pages/customer/ProductDetail'
 import FarmerSchedule from './pages/farmer/FarmerSchedule'
 import FarmerResources from './pages/farmer/FarmerResources'
+import FarmerOrderHistory from './pages/farmer/FarmerOrderHistory'
 import AdminOrders from './pages/admin/AdminOrders'
 import AdminFarmSettings from './pages/admin/AdminFarmSettings'
 import AdminGrowingAreas from './pages/admin/AdminGrowingAreas'
@@ -106,7 +107,7 @@ export default function App() {
           <Route
             path="/cart"
             element={
-              <ProtectedRoute allowedRoles={['customer']}>
+              <ProtectedRoute allowedRoles={['customer', 'admin']}>
                 <Cart />
               </ProtectedRoute>
             }
@@ -114,7 +115,7 @@ export default function App() {
           <Route
             path="/equipment/checkout"
             element={
-              <ProtectedRoute allowedRoles={['customer']}>
+              <ProtectedRoute allowedRoles={['customer', 'admin']}>
                 <EquipmentCheckout />
               </ProtectedRoute>
             }
@@ -150,6 +151,14 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['farmer', 'admin']}>
                 <FarmerOrders />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/farmer/order-history"
+            element={
+              <ProtectedRoute allowedRoles={['farmer', 'admin']}>
+                <FarmerOrderHistory />
               </ProtectedRoute>
             }
           />
@@ -200,6 +209,14 @@ export default function App() {
             element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <AdminOrders />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/order-history"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <FarmerOrderHistory />
               </ProtectedRoute>
             }
           />

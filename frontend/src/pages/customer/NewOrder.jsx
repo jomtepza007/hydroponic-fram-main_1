@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Clock, Leaf, ArrowLeft, ShoppingBag, Calendar,
-  CheckCircle2, AlertTriangle, Minus, Plus
+  CheckCircle2, AlertTriangle, Minus, Plus, ShoppingCart
 } from 'lucide-react'
 import Navbar from '../../components/layout/Navbar'
 import Footer from '../../components/layout/Footer'
@@ -10,12 +10,14 @@ import { getVegetableById } from '../../api/vegetables'
 import { checkFarmCapacity, createOrder } from '../../api/orders'
 import { supabase } from '../../api/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
+import { useCart } from '../../context/CartContext'
 import { getMinPickupDate, calculatePlantingSchedule, formatDateTh } from '../../utils/dateUtils'
 import toast from 'react-hot-toast'
 
 export default function NewOrder() {
   const { id } = useParams()
   const { user } = useAuth()
+  const { addToCart } = useCart()
   const navigate = useNavigate()
 
   const [vegetable, setVegetable] = useState(null)
@@ -104,7 +106,7 @@ export default function NewOrder() {
       const order = await createOrder(
         {
           customer_id: user.id,
-          status: 'pending',
+          status: 'waiting_cycle', // รอ farmer ยืนยันสร้างรอบปลูกก่อน จึงจะเป็น pending
           pickup_date: pickupDate,
           total_amount: quantity * vegetable.price_per_kg,
           notes: formattedNotes,
@@ -180,33 +182,64 @@ export default function NewOrder() {
             </div>
 
             {/* Quantity */}
-            <div className="card">
-              <label className="label">จำนวนที่ต้องการ ({vegetable.unit})</label>
+            <div className="card space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="label mb-0">จำนวนที่ต้องการ ({vegetable.unit})</label>
+                <span className="text-xs text-forest font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  เลือกได้ครั้งละ 0.5 กก.
+                </span>
+              </div>
+
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                  onClick={() => setQuantity(Math.max(0.5, Math.round((quantity - 0.5) * 10) / 10))}
                   className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center hover:bg-primary-100 transition-colors"
+                  title="ลด 0.5 กก."
                 >
                   <Minus className="w-4 h-4 text-forest" />
                 </button>
                 <input
                   type="number"
-                  min={1}
+                  step={0.5}
+                  min={0.5}
                   max={100}
                   value={quantity}
-                  onChange={e => setQuantity(Math.max(1, Number(e.target.value)))}
-                  className="input text-center w-24 font-bold text-lg"
+                  onChange={e => {
+                    const val = parseFloat(e.target.value)
+                    if (!isNaN(val)) setQuantity(Math.max(0.5, Math.round(val * 10) / 10))
+                  }}
+                  className="input text-center w-28 font-bold text-lg"
                   id="input-quantity"
                 />
                 <button
                   type="button"
-                  onClick={() => setQuantity(quantity + 1)}
+                  onClick={() => setQuantity(Math.round((quantity + 0.5) * 10) / 10)}
                   className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center hover:bg-primary-100 transition-colors"
+                  title="เพิ่ม 0.5 กก."
                 >
                   <Plus className="w-4 h-4 text-forest" />
                 </button>
-                <span className="text-sm text-gray-400">{vegetable.unit}</span>
+                <span className="text-sm text-gray-500 font-medium">{vegetable.unit}</span>
+              </div>
+
+              {/* Quick weight chips */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <span className="text-xs text-gray-400 mr-1">ทางลัด:</span>
+                {[0.5, 1.0, 1.5, 2.0, 3.0].map(w => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setQuantity(w)}
+                    className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                      quantity === w
+                        ? 'bg-forest text-white border-forest shadow-xs'
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-emerald-50 hover:border-emerald-300'
+                    }`}
+                  >
+                    {w} กก.
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -327,17 +360,32 @@ export default function NewOrder() {
               />
             </div>
 
-            <button
-              type="submit"
-              id="btn-confirm-order"
-              disabled={submitting || !capacity?.canAccept || !pickupDate}
-              className="btn-primary w-full btn-lg"
-            >
-              {submitting
-                ? <><div className="spinner w-4 h-4" /> กำลังส่งออเดอร์...</>
-                : <><ShoppingBag className="w-5 h-5" /> ยืนยันการสั่งจอง</>
-              }
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  addToCart(vegetable, quantity)
+                  toast.success(`เพิ่ม ${vegetable.name} ${quantity} ${vegetable.unit} ลงตะกร้าแล้ว 🌱`)
+                  navigate('/cart')
+                }}
+                className="btn-outline flex-1 py-3.5 flex items-center justify-center gap-2 border-forest text-forest hover:bg-forest hover:text-white"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                เพิ่มลงตะกร้าผัก
+              </button>
+
+              <button
+                type="submit"
+                id="btn-confirm-order"
+                disabled={submitting || !capacity?.canAccept || !pickupDate}
+                className="btn-primary flex-1 py-3.5 flex items-center justify-center gap-2"
+              >
+                {submitting
+                  ? <><div className="spinner w-4 h-4" /> กำลังส่งออเดอร์...</>
+                  : <><ShoppingBag className="w-5 h-5" /> ยืนยันการสั่งจองทันที</>
+                }
+              </button>
+            </div>
           </form>
 
           {/* Summary Sidebar */}

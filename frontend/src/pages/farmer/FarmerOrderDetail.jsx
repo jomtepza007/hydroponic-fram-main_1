@@ -278,9 +278,9 @@ export default function FarmerOrderDetail() {
                 <p className="text-xs text-gray-400 mb-1">
                   {isEquipment ? 'รายละเอียดการจัดส่ง' : 'หมายเหตุออเดอร์'}
                 </p>
-                {order.notes ? (
+                {cleanOrderNotes(order.notes) ? (
                   <p className="text-xs text-gray-700 whitespace-pre-line leading-relaxed">
-                    {order.notes}
+                    {cleanOrderNotes(order.notes)}
                   </p>
                 ) : (
                   <p className="text-xs text-gray-400 italic">ไม่มีหมายเหตุเพิ่มเติม</p>
@@ -294,7 +294,29 @@ export default function FarmerOrderDetail() {
             {/* Update Status */}
             <div className="card">
               <h2 className="font-semibold text-forest-dark mb-4">อัปเดตสถานะ</h2>
-              {nextStatus ? (
+              {order?.status === 'waiting_cycle' ? (
+                /* ล็อค — ต้องยืนยันสร้างรอบปลูกก่อน */
+                <div className="flex flex-col items-center text-center py-4 gap-3">
+                  <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
+                    <Calendar className="w-6 h-6 text-amber-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-700 mb-1">
+                      ต้องยืนยันสร้างรอบปลูกก่อน
+                    </p>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      ออเดอร์นี้ยังไม่มีรอบปลูก<br />กรุณาไปที่หน้าตารางรอบปลูก<br />แล้วกด "ยืนยันสร้างรอบปลูก" ก่อน
+                    </p>
+                  </div>
+                  <Link
+                    to="/farmer/schedule"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-all shadow-sm"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    ไปหน้าตารางรอบปลูก
+                  </Link>
+                </div>
+              ) : nextStatus ? (
                 <div>
                   <p className="text-sm text-gray-500 mb-4">
                     สถานะถัดไป: <strong className="text-forest font-bold">{labels[nextStatus]}</strong>

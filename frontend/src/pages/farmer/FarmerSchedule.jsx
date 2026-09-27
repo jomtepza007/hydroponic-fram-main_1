@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Calendar, Plus, X, MapPin, Leaf, CheckCircle2, Clock } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import { supabase } from '../../api/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { formatDateTh } from '../../utils/dateUtils'
+import { updateOrderStatus } from '../../api/orders'
 import toast from 'react-hot-toast'
 
 const CYCLE_STATUS_LABEL = {
@@ -65,6 +66,17 @@ export default function FarmerSchedule() {
   const [form, setForm] = useState({ growing_area_id: '', planting_start_date: '', notes: '' })
   const [saving, setSaving] = useState(false)
 
+  // คำนวณ activeCycles: กรองเฉพาะที่ยังไม่เสร็จสิ้น/ยกเลิก และต้องมี order เชื่อมอยู่
+  const activeCycles = useMemo(() => {
+    return cycles.filter(c => {
+      const orderInfo = c.order_items?.orders
+      // ซ่อน cycle ที่ไม่มี order เชื่อมอยู่ (เก่า/orphaned)
+      if (!orderInfo) return false
+      const displayStatus = ORDER_TO_CYCLE_STATUS[orderInfo.status] || c.status
+      return displayStatus !== 'done' && displayStatus !== 'cancelled'
+    })
+  }, [cycles])
+
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
@@ -84,15 +96,16 @@ export default function FarmerSchedule() {
           `)
           .order('planting_start_date', { ascending: true })
           .then(({ data, error }) => { if (error) throw error; return data || [] }),
-        // query order_items ที่ยังไม่มี planting_cycle โดยตรง (เฉพาะผัก ไม่รวมอุปกรณ์)
+        // query order_items ของออเดอร์ที่เป็น waiting_cycle หรือ pending ที่ยังไม่มีรอบปลูก — เฉพาะผัก
         supabase
           .from('order_items')
           .select(`
-            id, quantity, slots_required, vegetable_type_id,
+            id, order_id, quantity, slots_required, vegetable_type_id,
             vegetable_types (name, unit, harvest_days, category),
-            orders!inner (id, pickup_date, status)
+            orders!inner (id, pickup_date, status),
+            planting_cycles (id)
           `)
-          .eq('orders.status', 'confirmed')
+          .in('orders.status', ['waiting_cycle', 'pending'])
           .then(({ data, error }) => { if (error) throw error; return data || [] }),
         supabase
           .from('growing_areas')
@@ -113,11 +126,12 @@ export default function FarmerSchedule() {
       setCycles(allCycles)
       setGrowingAreas(areas)
 
-      // กรอง order_items ที่ยังไม่มี planting_cycle (เฉพาะผัก)
-      const cycleOrderItemIds = new Set(allCycles.map(c => c.order_item_id).filter(Boolean))
+      // กรอง order_items ที่เป็นผัก และยังไม่มีรอบปลูกสร้างขึ้น
       const pending = allOrderItems
-        .filter(item => item.vegetable_types?.category !== 'equipment')
-        .filter(item => !cycleOrderItemIds.has(item.id))
+        .filter(item =>
+          item.vegetable_types?.category !== 'equipment' &&
+          (!item.planting_cycles || item.planting_cycles.length === 0)
+        )
         .map(item => ({ order: item.orders, item }))
       setPendingOrders(pending)
 
@@ -145,6 +159,7 @@ export default function FarmerSchedule() {
       const harvestDays = item.vegetable_types?.harvest_days || 35
       const expectedHarvest = calcExpectedHarvest(form.planting_start_date, harvestDays)
 
+      // 1. สร้าง planting cycle
       const { error } = await supabase.from('planting_cycles').insert([{
         order_item_id: item.id,
         vegetable_type_id: item.vegetable_type_id,
@@ -157,13 +172,38 @@ export default function FarmerSchedule() {
         notes: form.notes,
       }])
       if (error) throw error
-      toast.success('สร้างรอบปลูกสำเร็จ ✅')
+
+      // 2. ตรวจสอบว่ายังมี order_items ผักรายการอื่นในออเดอร์นี้ที่ยังไม่ได้สร้างรอบปลูกหรือไม่
+      const { data: siblingItems } = await supabase
+        .from('order_items')
+        .select(`
+          id,
+          vegetable_types (category),
+          planting_cycles (id)
+        `)
+        .eq('order_id', order.id)
+
+      const remainingUnscheduled = (siblingItems || []).filter(oi =>
+        oi.id !== item.id &&
+        oi.vegetable_types?.category !== 'equipment' &&
+        (!oi.planting_cycles || oi.planting_cycles.length === 0)
+      )
+
+      if (remainingUnscheduled.length === 0) {
+        // เมื่อผักทุกชนิดในออเดอร์นี้มีรอบปลูกครบแล้ว เปลี่ยน order status เป็น pending
+        await updateOrderStatus(order.id, 'pending')
+        toast.success('✅ สร้างรอบปลูกครบทุกรายการแล้ว — ออเดอร์ย้ายไปรอดำเนินการ')
+      } else {
+        toast.success(`✅ สร้างรอบปลูกสำเร็จ (เหลืออีก ${remainingUnscheduled.length} รายการในออเดอร์นี้)`)
+      }
+
       setShowModal(false)
       loadAll()
     } catch (err) {
       toast.error(err.message || 'เกิดข้อผิดพลาด')
     } finally {
-      setSaving(false) }
+      setSaving(false)
+    }
   }
 
 
@@ -188,7 +228,7 @@ export default function FarmerSchedule() {
               className={`px-4 py-2 rounded-xl text-sm font-medium transition-all
                 ${tab === 'cycles' ? 'bg-forest text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-primary-50'}`}
             >
-              รอบปลูกทั้งหมด ({cycles.length})
+              รอบปลูกทั้งหมด ({activeCycles.length})
             </button>
             <button
               onClick={() => setTab('pending')}
@@ -209,15 +249,15 @@ export default function FarmerSchedule() {
             <div className="flex justify-center py-20"><div className="spinner w-10 h-10" /></div>
           ) : tab === 'cycles' ? (
 
-            /* ===== แท็บ: รอบปลูกทั้งหมด ===== */
-            cycles.length === 0 ? (
+            /* ===== แท็บ: รอบปลูกทั้งหมด (ซ่อน done/cancelled) ===== */
+            activeCycles.length === 0 ? (
               <div className="card text-center py-16 text-gray-300">
                 <Calendar className="w-12 h-12 mx-auto mb-3" />
-                <p>ยังไม่มีรอบปลูก — ไปที่แท็บ "รอสร้างรอบปลูก" เพื่อเริ่มต้น</p>
+                <p>ยังไม่มีรอบปลูกที่กำลังดำเนินการ</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {cycles.map(cycle => {
+                {activeCycles.map(cycle => {
                   const orderInfo = cycle.order_items?.orders
                   // derive สถานะจาก order เพื่อ sync อัตโนมัติ
                   const displayStatus = ORDER_TO_CYCLE_STATUS[orderInfo?.status] || cycle.status

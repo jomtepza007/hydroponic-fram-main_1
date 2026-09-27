@@ -5,6 +5,7 @@
  */
 
 const PHOTO_REGEX = /<!--PHOTOS:([\s\S]*?)-->/
+const PHOTO_REGEX_GLOBAL = /<!--PHOTOS:[\s\S]*?-->/g
 
 /**
  * ดึงรูปภาพทั้งหมดของออเดอร์จากทั้ง planting_updates และ order.notes
@@ -110,5 +111,5 @@ export function appendPhotoToOrderNotes(currentNotes = '', photoObj) {
  */
 export function cleanOrderNotes(notes = '') {
   if (!notes) return ''
-  return notes.replace(PHOTO_REGEX, '').trim()
+  return notes.replace(PHOTO_REGEX_GLOBAL, '').trim()
 }

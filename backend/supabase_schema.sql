@@ -292,10 +292,17 @@ CREATE POLICY "Customers create order items" ON order_items
 CREATE POLICY "Users view own notifications" ON notifications
   FOR ALL USING (auth.uid() = user_id);
 
--- Vegetable Types: ทุกคนอ่านได้
+-- Vegetable Types: ทุกคนอ่านได้, Farmer/Admin จัดการได้ทั้งหมด
 ALTER TABLE vegetable_types ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Anyone can read vegetables" ON vegetable_types;
+DROP POLICY IF EXISTS "Farmers and admins manage vegetables" ON vegetable_types;
+
 CREATE POLICY "Anyone can read vegetables" ON vegetable_types
-  FOR SELECT USING (is_active = true);
+  FOR SELECT USING (true);
+
+CREATE POLICY "Farmers and admins manage vegetables" ON vegetable_types
+  FOR ALL USING (get_my_role() IN ('farmer', 'admin'))
+  WITH CHECK (get_my_role() IN ('farmer', 'admin'));
 
 -- Resources: ทุกคนดูสต็อกได้, Farmer/Admin จัดการได้ทั้งหมด
 ALTER TABLE resources ENABLE ROW LEVEL SECURITY;

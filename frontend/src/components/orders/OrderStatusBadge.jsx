@@ -16,6 +16,7 @@ export default function OrderStatusBadge({ status, isEquipment = false }) {
   const className = classes[status] || ORDER_STATUS_CLASSES[status] || 'badge-pending'
 
   const dots = {
+    waiting_cycle: 'bg-amber-500',
     pending:   'bg-gray-400',
     confirmed: 'bg-teal-500',
     seeding:   'bg-yellow-500',

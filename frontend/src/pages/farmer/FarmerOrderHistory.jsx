@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Search, Phone, Package, Leaf, Mail, History } from 'lucide-react'
+import { ChevronRight, Search, History, Package, Mail, Phone, CheckCircle2, XCircle } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
 import { getAllOrders } from '../../api/orders'
@@ -11,17 +11,7 @@ import {
   getCustomerPhone,
   getCustomerEmail,
 } from '../../utils/dateUtils'
-
-// ไม่รวม completed/cancelled — ดูได้ที่หน้าประวัติการสั่งซื้อ
-const STATUS_FILTERS = [
-  { value: '', label: 'ทุกสถานะ' },
-  { value: 'waiting_cycle', label: 'รอสร้างรอบปลูก' },
-  { value: 'pending', label: 'รอดำเนินการ' },
-  { value: 'confirmed', label: 'ยืนยันแล้ว' },
-  { value: 'seeding', label: 'เพาะเมล็ด' },
-  { value: 'growing', label: 'ลงรางปลูก' },
-  { value: 'ready', label: 'พร้อมส่งมอบ/รอจัดส่ง' },
-]
+import { useAuth } from '../../context/AuthContext'
 
 const CATEGORY_FILTERS = [
   { value: 'all', label: 'ทั้งหมด' },
@@ -29,12 +19,19 @@ const CATEGORY_FILTERS = [
   { value: 'equipment', label: '🌱 อุปกรณ์ & ชุดปลูก' },
 ]
 
-export default function FarmerOrders() {
+const STATUS_FILTERS = [
+  { value: 'all', label: 'ทุกสถานะ' },
+  { value: 'completed', label: '✅ เสร็จสิ้น' },
+  { value: 'cancelled', label: '❌ ยกเลิก' },
+]
+
+export default function FarmerOrderHistory() {
+  const { isAdmin } = useAuth()
   const [orders, setOrders] = useState([])
   const [filtered, setFiltered] = useState([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
@@ -44,40 +41,43 @@ export default function FarmerOrders() {
   useEffect(() => {
     let result = orders
 
-    // Filter by status
-    if (statusFilter) {
-      result = result.filter(o => o.status === statusFilter)
-    }
-
-    // Filter by category
     if (categoryFilter === 'equipment') {
       result = result.filter(o => isEquipmentOrder(o))
     } else if (categoryFilter === 'vegetable') {
       result = result.filter(o => !isEquipmentOrder(o))
     }
 
-    // Search by customer name, order ID, or product name
+    if (statusFilter !== 'all') {
+      result = result.filter(o => o.status === statusFilter)
+    }
+
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase().trim()
       result = result.filter(o => {
         const idMatch = o.id.toLowerCase().includes(q)
         const nameMatch = getCustomerDisplayName(o).toLowerCase().includes(q)
         const phoneMatch = getCustomerPhone(o).toLowerCase().includes(q)
+        const emailMatch = getCustomerEmail(o).toLowerCase().includes(q)
         const itemsMatch = o.order_items?.some(i =>
           i.vegetable_types?.name?.toLowerCase().includes(q)
         )
-        return idMatch || nameMatch || phoneMatch || itemsMatch
+        return idMatch || nameMatch || phoneMatch || emailMatch || itemsMatch
       })
     }
 
     setFiltered(result)
-  }, [orders, statusFilter, categoryFilter, searchTerm])
+  }, [orders, categoryFilter, statusFilter, searchTerm])
 
   async function loadOrders() {
     try {
-      const data = await getAllOrders()
-      // กรองเฉพาะออเดอร์ที่ยังไม่เสร็จสิ้น — รวม waiting_cycle ด้วย
-      setOrders((data || []).filter(o => o.status !== 'completed' && o.status !== 'cancelled'))
+      // โหลดเฉพาะ completed และ cancelled
+      const [completed, cancelled] = await Promise.all([
+        getAllOrders({ status: 'completed' }),
+        getAllOrders({ status: 'cancelled' }),
+      ])
+      const all = [...(completed || []), ...(cancelled || [])]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      setOrders(all)
     } catch (err) {
       console.error(err)
     } finally {
@@ -85,9 +85,9 @@ export default function FarmerOrders() {
     }
   }
 
-  // Counts for category badges
-  const vegCount = orders.filter(o => !isEquipmentOrder(o)).length
-  const equipCount = orders.filter(o => isEquipmentOrder(o)).length
+  const completedCount = orders.filter(o => o.status === 'completed').length
+  const cancelledCount = orders.filter(o => o.status === 'cancelled').length
+  const detailBase = isAdmin ? '/admin/orders' : '/farmer/orders'
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -95,31 +95,47 @@ export default function FarmerOrders() {
 
       <main className="ml-64 flex-1 p-8">
         <div className="max-w-6xl mx-auto">
+
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div>
-              <h1 className="page-title">รายการออเดอร์</h1>
-              <p className="page-subtitle">ออเดอร์ที่กำลังดำเนินการอยู่ (ไม่รวมที่เสร็จสิ้นแล้ว)</p>
+              <div className="flex items-center gap-2 mb-1">
+                <History className="w-6 h-6 text-forest" />
+                <h1 className="page-title">ประวัติการสั่งซื้อ</h1>
+              </div>
+              <p className="page-subtitle">ออเดอร์ที่เสร็จสิ้นและยกเลิกทั้งหมด</p>
             </div>
-            <div className="flex items-center gap-3">
-              {/* ลิงก์ไปประวัติ */}
-              <Link
-                to="/farmer/order-history"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm"
-              >
-                <History className="w-4 h-4" />
-                ประวัติการสั่งซื้อ
-              </Link>
-              {/* Search */}
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  placeholder="ค้นหาชื่อลูกค้า, เลขออเดอร์..."
-                  className="input pl-9 text-sm"
-                />
+            {/* Search */}
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder="ค้นหาชื่อลูกค้า, เลขออเดอร์..."
+                className="input pl-9 text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="card flex items-center gap-3 p-4">
+              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-green-600">{completedCount}</p>
+                <p className="text-xs text-gray-500">เสร็จสิ้นแล้ว</p>
+              </div>
+            </div>
+            <div className="card flex items-center gap-3 p-4">
+              <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+                <XCircle className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-red-400">{cancelledCount}</p>
+                <p className="text-xs text-gray-500">ยกเลิกแล้ว</p>
               </div>
             </div>
           </div>
@@ -128,7 +144,11 @@ export default function FarmerOrders() {
           <div className="flex gap-2 mb-4 border-b border-gray-200 pb-3">
             {CATEGORY_FILTERS.map(cat => {
               const count =
-                cat.value === 'all' ? orders.length : cat.value === 'vegetable' ? vegCount : equipCount
+                cat.value === 'all'
+                  ? orders.length
+                  : cat.value === 'vegetable'
+                  ? orders.filter(o => !isEquipmentOrder(o)).length
+                  : orders.filter(o => isEquipmentOrder(o)).length
               return (
                 <button
                   key={cat.value}
@@ -181,22 +201,23 @@ export default function FarmerOrders() {
                   <th>หมวดหมู่</th>
                   <th>รายการสินค้า</th>
                   <th>วันรับ/จัดส่ง</th>
+                  <th>ยอดรวม</th>
                   <th>สถานะ</th>
-                  <th>จัดการ</th>
+                  <th>รายละเอียด</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10">
+                    <td colSpan={8} className="text-center py-10">
                       <div className="spinner w-8 h-8 mx-auto" />
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-12 text-gray-400">
-                      <Package className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-                      <p>ไม่พบออเดอร์ตามเงื่อนไขที่เลือก</p>
+                    <td colSpan={8} className="text-center py-12 text-gray-400">
+                      <History className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                      <p>ยังไม่มีประวัติออเดอร์</p>
                     </td>
                   </tr>
                 ) : (
@@ -204,12 +225,9 @@ export default function FarmerOrders() {
                     const isEquip = isEquipmentOrder(order)
                     const customerEmail = getCustomerEmail(order)
                     let customerName = getCustomerDisplayName(order)
-
-                    // ถ้าชื่อลูกค้ายังเป็นค่า default หรือชื่อย่อ แต่มี email ให้แสดงชื่อตาม email (ชื่อก่อน @)
                     if ((customerName === 'ลูกค้าทั่วไป' || customerName.startsWith('ลูกค้า (')) && customerEmail) {
                       customerName = customerEmail.split('@')[0]
                     }
-
                     const customerPhone = getCustomerPhone(order)
 
                     return (
@@ -222,7 +240,7 @@ export default function FarmerOrders() {
                           <p className="text-xs text-gray-400">{formatDateTh(order.created_at)}</p>
                         </td>
 
-                        {/* Customer Name */}
+                        {/* Customer */}
                         <td>
                           <div className="flex items-center gap-2.5">
                             {order.profiles?.avatar_url ? (
@@ -237,22 +255,20 @@ export default function FarmerOrders() {
                               </div>
                             )}
                             <div className="min-w-0">
-                              <p className="font-semibold text-gray-800 text-sm truncate max-w-[170px]" title={customerName}>
+                              <p className="font-semibold text-gray-800 text-sm truncate max-w-[150px]" title={customerName}>
                                 {customerName}
                               </p>
                               {customerEmail && (
-                                <p className="text-xs text-emerald-700 font-medium flex items-center gap-1 truncate max-w-[170px]" title={customerEmail}>
-                                  <Mail className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                                <p className="text-xs text-emerald-700 font-medium flex items-center gap-1 truncate max-w-[150px]">
+                                  <Mail className="w-3 h-3 flex-shrink-0" />
                                   <span className="truncate">{customerEmail}</span>
                                 </p>
                               )}
-                              {customerPhone ? (
+                              {customerPhone && (
                                 <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
-                                  <Phone className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                                  <Phone className="w-3 h-3 flex-shrink-0" />
                                   <span>{customerPhone}</span>
                                 </p>
-                              ) : (
-                                !customerEmail && <p className="text-[11px] text-gray-300">ลูกค้าสมาชิก</p>
                               )}
                             </div>
                           </div>
@@ -271,23 +287,23 @@ export default function FarmerOrders() {
                           )}
                         </td>
 
-                        {/* Order Items */}
+                        {/* Items */}
                         <td>
-                          <p className="text-sm text-gray-700 max-w-[200px] truncate font-medium">
+                          <p className="text-sm text-gray-700 max-w-[180px] truncate font-medium">
                             {order.order_items?.map(i => i.vegetable_types?.name).join(', ') || '-'}
-                          </p>
-                          <p className="text-xs text-gray-400">
-                            รวม ฿{Number(order.total_amount).toLocaleString()}
                           </p>
                         </td>
 
-                        {/* Pickup / Delivery Date */}
+                        {/* Pickup Date */}
                         <td>
-                          <p className="text-sm font-semibold text-forest">
-                            {formatDateTh(order.pickup_date)}
-                          </p>
-                          <p className="text-[11px] text-gray-400">
-                            {isEquip ? 'กำหนดส่งพัสดุ' : 'วันรับสินค้า'}
+                          <p className="text-sm font-semibold text-forest">{formatDateTh(order.pickup_date)}</p>
+                          <p className="text-[11px] text-gray-400">{isEquip ? 'กำหนดส่ง' : 'วันรับ'}</p>
+                        </td>
+
+                        {/* Total */}
+                        <td>
+                          <p className="font-semibold text-forest text-sm">
+                            ฿{Number(order.total_amount).toLocaleString()}
                           </p>
                         </td>
 
@@ -296,13 +312,13 @@ export default function FarmerOrders() {
                           <OrderStatusBadge status={order.status} isEquipment={isEquip} />
                         </td>
 
-                        {/* Action Link */}
+                        {/* Action */}
                         <td>
                           <Link
-                            to={`/farmer/orders/${order.id}`}
+                            to={`${detailBase}/${order.id}`}
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm"
                           >
-                            จัดการ <ChevronRight className="w-3.5 h-3.5" />
+                            ดูรายละเอียด <ChevronRight className="w-3.5 h-3.5" />
                           </Link>
                         </td>
                       </tr>
