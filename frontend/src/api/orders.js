@@ -19,9 +19,9 @@ export async function getMyOrders(customerId) {
 
 /** ดูออเดอร์รายละเอียด + planting_cycles + รูปภาพ */
 export async function getOrderById(orderId) {
-  const queryWithEmail = `
+  const makeQuery = (profileFields) => `
     *,
-    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, email, customer_type),
+    profiles!orders_customer_id_fkey (${profileFields}),
     order_items (
       *,
       vegetable_types (name, image_url, unit, harvest_days, category),
@@ -32,27 +32,22 @@ export async function getOrderById(orderId) {
       )
     )
   `
-  const queryWithoutEmail = `
-    *,
-    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, customer_type),
-    order_items (
-      *,
-      vegetable_types (name, image_url, unit, harvest_days, category),
-      planting_cycles (
-        *,
-        growing_areas (name, zone_code),
-        planting_updates (*)
-      )
-    )
-  `
-  let { data, error } = await supabase.from('orders').select(queryWithEmail).eq('id', orderId).single()
-  if (error && error.message && error.message.includes('email')) {
-    const fallback = await supabase.from('orders').select(queryWithoutEmail).eq('id', orderId).single()
-    if (fallback.error) throw fallback.error
-    return fallback.data
+
+  // 1. ลองดึงแบบมี customer_type และ email
+  let res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone, email, customer_type')).eq('id', orderId).single()
+
+  // 2. ถ้า DB ยังไม่ได้รัน migration customer_type ให้ดึงแบบไม่มี customer_type
+  if (res.error && res.error.message && (res.error.message.includes('customer_type') || res.error.code === '42703')) {
+    res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone, email')).eq('id', orderId).single()
   }
-  if (error) throw error
-  return data
+
+  // 3. ถ้าไม่มีคอลัมน์ email ให้ดึงเฉพาะข้อมูลพื้นฐาน
+  if (res.error && res.error.message && res.error.message.includes('email')) {
+    res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone')).eq('id', orderId).single()
+  }
+
+  if (res.error) throw res.error
+  return res.data
 }
 
 /** Admin/Farmer: ดูออเดอร์ทั้งหมด */
