@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../api/supabaseClient'
-import { Shield, Ban, UserCheck, ChevronDown } from 'lucide-react'
+import { Ban, UserCheck } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import { useAuth } from '../../context/AuthContext'
 import { formatDateTh } from '../../utils/dateUtils'

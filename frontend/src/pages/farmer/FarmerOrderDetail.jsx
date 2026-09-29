@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  ArrowLeft, Camera, Upload, CheckCircle2, User, Phone, MapPin,
-  Truck, Package, Leaf, Calendar, Percent, Tag, History, Edit3,
+  ArrowLeft, Camera, CheckCircle2, User, Phone,
+  Leaf, Calendar, Percent, Tag, History, Edit3,
   ChevronDown, ChevronUp, AlertCircle
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
