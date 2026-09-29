@@ -89,8 +89,15 @@ export default function OrderHistory() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <p className="font-bold text-forest">฿{Number(order.total_amount).toLocaleString()}</p>
+                <div className="flex items-center gap-3 flex-shrink-0 text-right">
+                  {order.status !== 'pending' && order.final_amount != null && Number(order.final_amount) < Number(order.total_amount) ? (
+                    <div>
+                      <span className="text-xs text-gray-400 line-through block">฿{Number(order.total_amount).toLocaleString()}</span>
+                      <span className="font-bold text-forest">฿{Number(order.final_amount).toLocaleString()}</span>
+                    </div>
+                  ) : (
+                    <p className="font-bold text-forest">฿{Number(order.total_amount).toLocaleString()}</p>
+                  )}
                   <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-forest transition-colors" />
                 </div>
               </Link>

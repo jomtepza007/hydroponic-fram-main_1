@@ -276,9 +276,17 @@ export default function FarmerOrders() {
                           <p className="text-sm text-gray-700 max-w-[200px] truncate font-medium">
                             {order.order_items?.map(i => i.vegetable_types?.name).join(', ') || '-'}
                           </p>
-                          <p className="text-xs text-gray-400">
-                            รวม ฿{Number(order.total_amount).toLocaleString()}
-                          </p>
+                          <div className="text-xs text-gray-400">
+                            {order.final_amount != null && Number(order.final_amount) < Number(order.total_amount) ? (
+                              <span>
+                                <span className="line-through mr-1">฿{Number(order.total_amount).toLocaleString()}</span>
+                                <span className="text-forest font-bold">฿{Number(order.final_amount).toLocaleString()}</span>
+                                <span className="ml-1 text-[10px] text-emerald-700 font-semibold">(ลดแล้ว)</span>
+                              </span>
+                            ) : (
+                              <span>รวม ฿{Number(order.total_amount).toLocaleString()}</span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Pickup / Delivery Date */}

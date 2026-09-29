@@ -108,51 +108,122 @@ export default function OrderTracking() {
         <div className="card mb-6">
           <h2 className="font-semibold text-forest-dark mb-4">รายการสินค้า</h2>
           <div className="space-y-4">
-            {order.order_items?.map(item => (
-              <div key={item.id} className="flex items-center gap-4 p-4 bg-primary-50 rounded-xl">
-                <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
-                  {item.vegetable_types?.image_url
-                    ? <img src={item.vegetable_types.image_url} alt="" className="w-full h-full object-cover rounded-xl" />
-                    : <Leaf className="w-6 h-6 text-primary-300" />
-                  }
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800">{item.vegetable_types?.name}</p>
-                    {item.vegetable_types?.category === 'equipment' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">อุปกรณ์</span>
+            {order.order_items?.map(item => {
+              const itemTotal = Number(item.quantity) * Number(item.price_at_order)
+              const hasDiscount = order.status !== 'pending' && Number(item.discount_rate) > 0
+              const itemDiscountAmount = item.discount_amount != null
+                ? Number(item.discount_amount)
+                : Math.round(itemTotal * (Number(item.discount_rate) / 100) * 100) / 100
+              const itemFinalPrice = item.final_price != null
+                ? Number(item.final_price)
+                : itemTotal - itemDiscountAmount
+
+              return (
+                <div key={item.id} className="flex items-center gap-4 p-4 bg-primary-50 rounded-xl">
+                  <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {item.vegetable_types?.image_url
+                      ? <img src={item.vegetable_types.image_url} alt="" className="w-full h-full object-cover rounded-xl" />
+                      : <Leaf className="w-6 h-6 text-primary-300" />
+                    }
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-gray-800">{item.vegetable_types?.name}</p>
+                      {item.vegetable_types?.category === 'equipment' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">อุปกรณ์</span>
+                      )}
+                      {hasDiscount && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
+                          ลด {item.discount_rate}% (-฿{itemDiscountAmount.toLocaleString()})
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-400">
+                      จำนวน {item.quantity} {item.vegetable_types?.unit || item.unit}
+                      {(item.slots_required > 0 || item.vegetable_types?.slots_per_kg) && item.vegetable_types?.category !== 'equipment' && (
+                        <span className="ml-2 font-medium text-forest">
+                          • ใช้พื้นที่ {item.slots_required || Math.ceil(item.quantity * (item.vegetable_types?.slots_per_kg || 4))} ช่อง
+                        </span>
+                      )}
+                      {item.vegetable_types?.harvest_days && item.vegetable_types?.category !== 'equipment' && (
+                        <span className="ml-2">• ปลูก {item.vegetable_types.harvest_days} วัน</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    {hasDiscount ? (
+                      <div>
+                        <span className="line-through text-gray-400 text-xs block">
+                          ฿{itemTotal.toLocaleString()}
+                        </span>
+                        <span className="font-bold text-forest">
+                          ฿{itemFinalPrice.toLocaleString()}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="font-bold text-forest">
+                        ฿{itemTotal.toLocaleString()}
+                      </p>
                     )}
                   </div>
-                  <p className="text-sm text-gray-400">
-                    จำนวน {item.quantity} {item.vegetable_types?.unit || item.unit}
-                    {(item.slots_required > 0 || item.vegetable_types?.slots_per_kg) && item.vegetable_types?.category !== 'equipment' && (
-                      <span className="ml-2 font-medium text-forest">
-                        • ใช้พื้นที่ {item.slots_required || Math.ceil(item.quantity * (item.vegetable_types?.slots_per_kg || 4))} ช่อง
-                      </span>
-                    )}
-                    {item.vegetable_types?.harvest_days && item.vegetable_types?.category !== 'equipment' && (
-                      <span className="ml-2">• ปลูก {item.vegetable_types.harvest_days} วัน</span>
-                    )}
-                  </p>
                 </div>
-                <p className="font-bold text-forest">
-                  ฿{(item.quantity * item.price_at_order).toLocaleString()}
-                </p>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
-          <div className="border-t border-gray-100 mt-4 pt-4 flex justify-between items-center">
-            <div className="flex items-center gap-2 text-gray-500">
-              <Calendar className="w-4 h-4" />
-              <span className="text-sm">
-                {isEquipment ? 'กำหนดส่งสินค้าประมาณ:' : 'วันรับสินค้า:'} <strong className="text-forest">{formatDateTh(order.pickup_date)}</strong>
-              </span>
-            </div>
-            <p className="font-bold text-lg text-forest-dark">
-              รวม ฿{Number(order.total_amount).toLocaleString()}
-            </p>
-          </div>
+          {/* Pricing summary */}
+          {(() => {
+            const isConfirmedOrLater = order.status !== 'pending'
+            const origTotal = Number(order.total_amount)
+            const totalDiscount = order.order_items?.reduce((sum, it) => {
+              if (!isConfirmedOrLater || !(Number(it.discount_rate) > 0)) return sum
+              const itTotal = Number(it.quantity) * Number(it.price_at_order)
+              const itDisc = it.discount_amount != null
+                ? Number(it.discount_amount)
+                : Math.round(itTotal * (Number(it.discount_rate) / 100) * 100) / 100
+              return sum + itDisc
+            }, 0) || 0
+
+            const hasAnyDiscount = isConfirmedOrLater && totalDiscount > 0
+            const finalAmount = order.final_amount != null
+              ? Number(order.final_amount)
+              : Math.max(0, origTotal - totalDiscount)
+
+            return (
+              <div className="border-t border-gray-100 mt-4 pt-4 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <Calendar className="w-4 h-4" />
+                    <span className="text-sm">
+                      {isEquipment ? 'กำหนดส่งสินค้าประมาณ:' : 'วันรับสินค้า:'} <strong className="text-forest">{formatDateTh(order.pickup_date)}</strong>
+                    </span>
+                  </div>
+
+                  {!hasAnyDiscount ? (
+                    <p className="font-bold text-lg text-forest-dark">
+                      รวม ฿{origTotal.toLocaleString()}
+                    </p>
+                  ) : (
+                    <div className="text-right space-y-1">
+                      <div className="text-xs text-gray-400">
+                        <span>ราคาปกติ ฿{origTotal.toLocaleString()}</span>
+                        <span className="text-emerald-700 font-semibold ml-2">ส่วนลดรวม -฿{totalDiscount.toLocaleString()}</span>
+                      </div>
+                      <p className="font-bold text-xl text-forest">
+                        ยอดชำระสุทธิ ฿{finalAmount.toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {order.status === 'pending' && (
+                  <p className="text-xs text-gray-400 italic">
+                    * ยอดเงินข้างต้นเป็นราคาปกติก่อนตรวจสอบคำสั่งซื้อ ยอดชำระสุทธิจะยืนยันเมื่อฟาร์มตรวจสอบออเดอร์
+                  </p>
+                )}
+              </div>
+            )
+          })()}
         </div>
 
         {/* Growth Photos (Always show if photos exist) */}
