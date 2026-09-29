@@ -119,8 +119,17 @@ export default function AdminOrders() {
                       <td className="text-sm text-gray-600">
                         {o.order_items?.map(i => i.vegetable_types?.name).join(', ') || '-'}
                       </td>
-                      <td className="text-sm font-medium text-forest">{formatDateTh(o.pickup_date)}</td>
-                      <td className="font-semibold text-forest">฿{Number(o.total_amount).toLocaleString()}</td>
+                      <td className="sm:text-left">
+                        {o.final_amount != null && Number(o.final_amount) < Number(o.total_amount) ? (
+                          <div>
+                            <span className="text-xs text-gray-400 line-through block">฿{Number(o.total_amount).toLocaleString()}</span>
+                            <span className="text-forest font-bold text-sm">฿{Number(o.final_amount).toLocaleString()}</span>
+                            <span className="text-[10px] text-emerald-600 font-semibold block">ลดแล้ว</span>
+                          </div>
+                        ) : (
+                          <span className="font-semibold text-forest">฿{Number(o.total_amount).toLocaleString()}</span>
+                        )}
+                      </td>
                       <td><OrderStatusBadge status={o.status} isEquipment={isEquipmentOrder(o)} /></td>
                       <td>
                         {o.status === 'waiting_cycle' ? (

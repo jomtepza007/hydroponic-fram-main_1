@@ -436,42 +436,308 @@ export default function FarmerOrderDetail() {
             </div>
           </div>
 
-          {/* Order Items Table */}
+          {/* Order Items & Discount Management */}
           <div className="card mb-6">
-            <h2 className="font-semibold text-forest-dark mb-4">รายการสินค้าในออเดอร์</h2>
-            <div className="space-y-3">
-              {order.order_items?.map(item => (
-                <div key={item.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded-xl">
-                  <div className="w-12 h-12 bg-white rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0 border border-gray-100">
-                    {item.vegetable_types?.image_url ? (
-                      <img src={item.vegetable_types.image_url} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <Leaf className="w-5 h-5 text-gray-300" />
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-semibold text-forest-dark flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-forest" />
+                  รายการสินค้า & การกำหนดส่วนลด
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  ท่านสามารถกำหนดส่วนลดแบบเปอร์เซ็นต์แยกตามแต่ละรายการสินค้าได้อิสระ
+                </p>
+              </div>
+              {discountLogs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowLogs(!showLogs)}
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors font-medium"
+                >
+                  <History className="w-3.5 h-3.5 text-forest" />
+                  ประวัติส่วนลด ({discountLogs.length})
+                  {showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              )}
+            </div>
+
+            {/* Logs Drawer/Accordion */}
+            {showLogs && discountLogs.length > 0 && (
+              <div className="mb-4 p-3.5 bg-gray-50 border border-gray-200 rounded-xl space-y-2 text-xs">
+                <p className="font-bold text-gray-700 flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5 text-forest" />
+                  ประวัติการปรับส่วนลด
+                </p>
+                <div className="divide-y divide-gray-200">
+                  {discountLogs.map(log => {
+                    const itemMatch = order.order_items?.find(it => it.id === log.order_item_id)
+                    const itemName = itemMatch?.vegetable_types?.name || 'รายการสินค้า'
+                    return (
+                      <div key={log.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <div>
+                          <span className="font-semibold text-gray-800">{itemName}: </span>
+                          <span className="text-gray-500">{log.old_rate}% → </span>
+                          <strong className="text-forest font-bold">{log.new_rate}%</strong>
+                          {log.note && <span className="text-gray-500 italic ml-2">({log.note})</span>}
+                        </div>
+                        <div className="text-gray-400 text-[11px]">
+                          โดย {log.profiles?.full_name || 'ผู้ดูแลระบบ'} ({formatDateTh(log.created_at, 'd MMM yyyy HH:mm')})
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {order.order_items?.map(item => {
+                const itemTotal = Number(item.quantity) * Number(item.price_at_order)
+                const itemRate = Number(item.discount_rate) || 0
+                const itemDiscountAmount = item.discount_amount != null
+                  ? Number(item.discount_amount)
+                  : Math.round(itemTotal * (itemRate / 100) * 100) / 100
+                const itemFinalPrice = item.final_price != null
+                  ? Number(item.final_price)
+                  : itemTotal - itemDiscountAmount
+
+                const isEditing = activeEditItemId === item.id
+                const currentInput = discountInputs[item.id] || { rate: itemRate, note: '' }
+                const inputRate = Math.max(0, Math.min(100, Number(currentInput.rate) || 0))
+                const previewDisc = Math.round(itemTotal * (inputRate / 100) * 100) / 100
+                const previewFinal = Math.round((itemTotal - previewDisc) * 100) / 100
+
+                return (
+                  <div key={item.id} className="p-3.5 bg-gray-50 rounded-xl border border-gray-100 transition-all">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-white rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0 border border-gray-100 shadow-2xs">
+                          {item.vegetable_types?.image_url ? (
+                            <img src={item.vegetable_types.image_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <Leaf className="w-5 h-5 text-gray-300" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-gray-800 text-sm">{item.vegetable_types?.name}</p>
+                            {item.vegetable_types?.category === 'equipment' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">อุปกรณ์</span>
+                            )}
+                            {itemRate > 0 && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
+                                ส่วนลด {itemRate}% (-฿{itemDiscountAmount.toLocaleString()})
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            จำนวน {item.quantity} {item.vegetable_types?.unit || item.unit} × ฿{Number(item.price_at_order).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-200">
+                        <div className="text-right">
+                          {itemRate > 0 ? (
+                            <div>
+                              <span className="text-xs text-gray-400 line-through mr-1.5">
+                                ฿{itemTotal.toLocaleString()}
+                              </span>
+                              <span className="font-bold text-forest text-sm">
+                                ฿{itemFinalPrice.toLocaleString()}
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="font-bold text-gray-800 text-sm">
+                              ฿{itemTotal.toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveEditItemId(isEditing ? null : item.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all
+                            ${isEditing
+                              ? 'bg-gray-200 text-gray-700'
+                              : 'bg-white border border-gray-200 text-forest hover:bg-forest hover:text-white shadow-2xs'}`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          {isEditing ? 'ปิด' : itemRate > 0 ? 'แก้ส่วนลด' : 'ให้ส่วนลด'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Inline Discount Editor */}
+                    {isEditing && (
+                      <div className="mt-3 pt-3 border-t border-gray-200/80 bg-white p-3 rounded-lg border shadow-xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                            <Percent className="w-3.5 h-3.5 text-forest" />
+                            ปรับส่วนลดสำหรับ: {item.vegetable_types?.name}
+                          </span>
+                          <span className="text-xs text-gray-400">ราคาปกติ ฿{itemTotal.toLocaleString()}</span>
+                        </div>
+
+                        {/* Presets */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] text-gray-400 mr-1">ทางลัด:</span>
+                          {[0, 5, 10, 15, 20, 25, 30].map(p => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => {
+                                setDiscountInputs(prev => ({
+                                  ...prev,
+                                  [item.id]: { ...(prev[item.id] || {}), rate: p }
+                                }))
+                              }}
+                              className={`text-[11px] px-2 py-0.5 rounded-md font-semibold transition-colors
+                                ${inputRate === p
+                                  ? 'bg-forest text-white'
+                                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                            >
+                              {p === 0 ? '0% (ราคาเต็ม)' : `${p}%`}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Input Row */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="text-[11px] font-semibold text-gray-500 mb-1 block">
+                              เปอร์เซ็นต์ส่วนลด (%)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={currentInput.rate}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setDiscountInputs(prev => ({
+                                    ...prev,
+                                    [item.id]: { ...(prev[item.id] || {}), rate: val }
+                                  }))
+                                }}
+                                className="input text-sm py-1.5 px-3 pr-7 w-full font-bold"
+                                placeholder="0"
+                              />
+                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-bold">%</span>
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="text-[11px] font-semibold text-gray-500 mb-1 block">
+                              หมายเหตุส่วนลด (เช่น ลูกค้าประจำ, สั่งยกลัง)
+                            </label>
+                            <input
+                              type="text"
+                              value={currentInput.note}
+                              onChange={e => {
+                                const val = e.target.value
+                                setDiscountInputs(prev => ({
+                                  ...prev,
+                                  [item.id]: { ...(prev[item.id] || {}), note: val }
+                                }))
+                              }}
+                              className="input text-sm py-1.5 px-3 w-full"
+                              placeholder="ระบุเหตุผล (ไม่บังคับ)"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Live calculation banner & Save Button */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-100">
+                          <div className="text-xs text-emerald-900">
+                            <span>ลด <strong>{inputRate}%</strong> (-฿{previewDisc.toLocaleString()})</span>
+                            <span className="mx-2">→</span>
+                            <span>ราคาหลังลด: <strong className="text-forest text-sm">฿{previewFinal.toLocaleString()}</strong></span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setActiveEditItemId(null)}
+                              className="px-3 py-1 text-xs rounded-lg text-gray-500 hover:bg-gray-100"
+                            >
+                              ยกเลิก
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveDiscount(item.id)}
+                              disabled={savingDiscount[item.id]}
+                              className="btn-primary text-xs py-1.5 px-4"
+                            >
+                              {savingDiscount[item.id] ? (
+                                <><div className="spinner w-3 h-3" /> กำลังบันทึก...</>
+                              ) : (
+                                '✓ บันทึกส่วนลดรายการนี้'
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-gray-800 text-sm">{item.vegetable_types?.name}</p>
-                      {item.vegetable_types?.category === 'equipment' && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">อุปกรณ์</span>
+                )
+              })}
+            </div>
+
+            {/* Summary calculation */}
+            {(() => {
+              const origTotal = order.order_items?.reduce((sum, it) => sum + (Number(it.quantity) * Number(it.price_at_order)), 0) || Number(order.total_amount)
+              const totalDiscount = order.order_items?.reduce((sum, it) => {
+                const itemRate = Number(it.discount_rate) || 0
+                const itOrig = Number(it.quantity) * Number(it.price_at_order)
+                const itDisc = it.discount_amount != null
+                  ? Number(it.discount_amount)
+                  : Math.round(itOrig * (itemRate / 100) * 100) / 100
+                return sum + itDisc
+              }, 0) || 0
+              const calcFinal = Math.max(0, origTotal - totalDiscount)
+              const displayedFinal = (order.status !== 'pending' && order.final_amount != null)
+                ? Number(order.final_amount)
+                : calcFinal
+
+              return (
+                <div className="border-t border-gray-100 mt-5 pt-4 space-y-2">
+                  <div className="flex justify-between items-center text-sm text-gray-600">
+                    <span>ยอดรวมราคาเต็ม</span>
+                    <span>฿{origTotal.toLocaleString()}</span>
+                  </div>
+
+                  {totalDiscount > 0 && (
+                    <div className="flex justify-between items-center text-sm text-emerald-700 font-medium">
+                      <span>รวมส่วนลดทั้งหมด</span>
+                      <span>-฿{totalDiscount.toLocaleString()}</span>
+                    </div>
+                  )}
+
+                  <div className="border-t border-gray-100 pt-2 flex justify-between items-center">
+                    <div>
+                      <span className="font-bold text-base text-gray-800">ยอดชำระสุทธิ (Final Amount)</span>
+                      {order.status === 'pending' && (
+                        <p className="text-[11px] text-amber-600 flex items-center gap-1 mt-0.5">
+                          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                          สถานะ "รอดำเนินการ": ลูกค้าจะยังเห็นราคาเต็ม ฿{origTotal.toLocaleString()} จนกว่าท่านจะกดยืนยันออเดอร์
+                        </p>
+                      )}
+                      {order.status !== 'pending' && totalDiscount > 0 && (
+                        <p className="text-[11px] text-forest flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                          ยืนยันแล้ว: ลูกค้าเห็นราคาสุทธิหลังส่วนลดเรียบร้อยแล้ว
+                        </p>
                       )}
                     </div>
-                    <p className="text-xs text-gray-400">
-                      จำนวน {item.quantity} {item.vegetable_types?.unit || item.unit} × ฿{Number(item.price_at_order).toLocaleString()}
-                    </p>
+                    <span className="font-bold text-xl text-forest">
+                      ฿{displayedFinal.toLocaleString()}
+                    </span>
                   </div>
-                  <p className="font-bold text-forest text-sm">
-                    ฿{(item.quantity * item.price_at_order).toLocaleString()}
-                  </p>
                 </div>
-              ))}
-            </div>
-            <div className="border-t border-gray-100 mt-4 pt-3 flex justify-between items-center text-sm">
-              <span className="text-gray-500 font-medium">ยอดรวมสุทธิ</span>
-              <span className="font-bold text-lg text-forest">
-                ฿{Number(order.total_amount).toLocaleString()}
-              </span>
-            </div>
+              )
+            })()}
           </div>
 
           {/* Growth Photos */}
