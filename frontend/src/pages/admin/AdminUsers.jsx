@@ -7,6 +7,7 @@ import { formatDateTh } from '../../utils/dateUtils'
 import toast from 'react-hot-toast'
 
 const ROLES = ['customer', 'farmer', 'admin']
+const CUSTOMER_TYPES = ['ทั่วไป', 'ร้านอาหาร', 'โรงแรม', 'ขายส่ง', 'องค์กร']
 
 export default function AdminUsers() {
   const { user: currentUser } = useAuth()
@@ -45,6 +46,17 @@ export default function AdminUsers() {
     }
   }
 
+  async function updateCustomerType(userId, customerType) {
+    try {
+      const { error } = await supabase.from('profiles').update({ customer_type: customerType }).eq('id', userId)
+      if (error) throw error
+      toast.success(`เปลี่ยนประเภทลูกค้าเป็น "${customerType}" สำเร็จ`)
+      setUsers(u => u.map(usr => usr.id === userId ? { ...usr, customer_type: customerType } : usr))
+    } catch {
+      toast.error('เกิดข้อผิดพลาดในการเปลี่ยนประเภทลูกค้า')
+    }
+  }
+
   async function toggleBan(userId, isBanned) {
     if (userId === currentUser?.id) {
       toast.error('ไม่สามารถ Ban บัญชีของตัวเองได้')
@@ -77,6 +89,7 @@ export default function AdminUsers() {
                 <tr>
                   <th>ผู้ใช้</th>
                   <th>Role</th>
+                  <th>ประเภทลูกค้า (สำหรับส่วนลด)</th>
                   <th>สมัครเมื่อ</th>
                   <th>สถานะ</th>
                   <th>จัดการ</th>
@@ -84,7 +97,7 @@ export default function AdminUsers() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={5} className="text-center py-10"><div className="spinner w-8 h-8 mx-auto" /></td></tr>
+                  <tr><td colSpan={6} className="text-center py-10"><div className="spinner w-8 h-8 mx-auto" /></td></tr>
                 ) : users.map(u => (
                   <tr key={u.id}>
                     <td>
@@ -118,6 +131,22 @@ export default function AdminUsers() {
                       >
                         {ROLES.map(r => (
                           <option key={r} value={r}>{r === 'admin' ? '👑 Admin' : r === 'farmer' ? '🧑‍🌾 Farmer' : '👤 Customer'}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        value={u.customer_type || 'ทั่วไป'}
+                        onChange={e => updateCustomerType(u.id, e.target.value)}
+                        className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 font-medium bg-white text-gray-700 hover:border-forest cursor-pointer focus:outline-none focus:ring-1 focus:ring-forest"
+                      >
+                        {CUSTOMER_TYPES.map(type => (
+                          <option key={type} value={type}>
+                            {type === 'ร้านอาหาร' ? '🍽️ ร้านอาหาร' :
+                             type === 'โรงแรม' ? '🏨 โรงแรม' :
+                             type === 'ขายส่ง' ? '📦 ขายส่ง' :
+                             type === 'องค์กร' ? '🏢 องค์กร' : '👤 ทั่วไป'}
+                          </option>
                         ))}
                       </select>
                     </td>

@@ -230,6 +230,32 @@ router.put('/:id/status', authMiddleware, requireRole('admin', 'farmer'), async 
       updatePayload.notes = notes
     }
 
+    // เมื่อกดยืนยันออเดอร์ (confirmed) คำนวณ final_amount จาก order_items
+    if (status === 'confirmed') {
+      try {
+        const { data: items } = await supabase
+          .from('order_items')
+          .select('quantity, price_at_order, discount_rate, discount_amount, final_price')
+          .eq('order_id', req.params.id)
+
+        if (items && items.length > 0) {
+          const finalSum = items.reduce((sum, item) => {
+            if (item.final_price != null && !isNaN(Number(item.final_price))) {
+              return sum + Number(item.final_price)
+            }
+            const orig = Number(item.quantity) * Number(item.price_at_order)
+            const disc = item.discount_amount != null
+              ? Number(item.discount_amount)
+              : Math.round(orig * ((Number(item.discount_rate) || 0) / 100) * 100) / 100
+            return sum + (orig - disc)
+          }, 0)
+          updatePayload.final_amount = Math.round(finalSum * 100) / 100
+        }
+      } catch (err) {
+        console.warn('Backend could not precalculate final_amount:', err)
+      }
+    }
+
     const { data, error } = await supabase
       .from('orders')
       .update(updatePayload)
@@ -286,6 +312,110 @@ router.put('/:id/status', authMiddleware, requireRole('admin', 'farmer'), async 
 
     res.json(data)
   } catch (err) { res.status(400).json({ error: err.message }) }
+})
+
+// PUT /api/orders/:id/items/:itemId/discount — ปรับส่วนลดต่อรายการสินค้า
+router.put('/:id/items/:itemId/discount', authMiddleware, requireRole('admin', 'farmer'), async (req, res) => {
+  try {
+    const { discount_rate, note } = req.body
+    const rate = Math.max(0, Math.min(100, Number(discount_rate) || 0))
+
+    // 1. ลองเรียกผ่าน Stored Procedure apply_item_discount ก่อน
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('apply_item_discount', {
+        p_order_item_id: req.params.itemId,
+        p_discount_rate: rate,
+        p_note: note || null,
+        p_changed_by: req.user.id,
+      })
+
+      if (!rpcError && rpcData && rpcData.success) {
+        return res.json(rpcData)
+      }
+    } catch (rpcErr) {
+      console.warn('Backend RPC apply_item_discount fallback:', rpcErr)
+    }
+
+    // 2. Fallback
+    const { data: item, error: fetchErr } = await supabase
+      .from('order_items')
+      .select('id, quantity, price_at_order, discount_rate')
+      .eq('id', req.params.itemId)
+      .single()
+
+    if (fetchErr) throw fetchErr
+
+    const oldRate = Number(item.discount_rate) || 0
+    const origTotal = Number(item.quantity) * Number(item.price_at_order)
+    const discountAmount = Math.round(origTotal * (rate / 100) * 100) / 100
+    const finalPrice = Math.round((origTotal - discountAmount) * 100) / 100
+
+    const { data: updatedItem, error: updateErr } = await supabase
+      .from('order_items')
+      .update({
+        discount_rate: rate,
+        discount_amount: discountAmount,
+        final_price: finalPrice,
+      })
+      .eq('id', req.params.itemId)
+      .select()
+      .single()
+
+    if (updateErr) throw updateErr
+
+    // Insert log
+    await supabase.from('discount_logs').insert([{
+      order_id: req.params.id,
+      order_item_id: req.params.itemId,
+      changed_by: req.user.id,
+      old_rate: oldRate,
+      new_rate: rate,
+      discount_amount: discountAmount,
+      note: note || null,
+    }])
+
+    // If order confirmed, sync final_amount
+    const { data: ord } = await supabase.from('orders').select('status').eq('id', req.params.id).single()
+    if (ord && ord.status !== 'pending' && ord.status !== 'cancelled') {
+      const { data: allItems } = await supabase
+        .from('order_items')
+        .select('quantity, price_at_order, final_price')
+        .eq('order_id', req.params.id)
+
+      if (allItems) {
+        const orderFinal = allItems.reduce((acc, it) => {
+          return acc + (it.final_price != null ? Number(it.final_price) : Number(it.quantity) * Number(it.price_at_order))
+        }, 0)
+
+        await supabase
+          .from('orders')
+          .update({ final_amount: Math.round(orderFinal * 100) / 100, updated_at: new Date().toISOString() })
+          .eq('id', req.params.id)
+      }
+    }
+
+    res.json({
+      success: true,
+      discount_rate: rate,
+      discount_amount: discountAmount,
+      final_price: finalPrice,
+      item: updatedItem,
+    })
+  } catch (err) { res.status(400).json({ error: err.message }) }
+})
+
+// GET /api/orders/:id/discount-logs — ดึงประวัติส่วนลด
+router.get('/:id/discount-logs', authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('discount_logs')
+      .select('*, profiles:changed_by(full_name, role)')
+      .eq('order_id', req.params.id)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    res.json(data || [])
+  } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
 export default router

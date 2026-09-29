@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   email         text,
   role          text NOT NULL DEFAULT 'customer'
                 CHECK (role IN ('admin', 'farmer', 'customer')),
+  customer_type text NOT NULL DEFAULT 'ทั่วไป',
   phone         text,
   is_banned     boolean NOT NULL DEFAULT false,
   created_at    timestamptz NOT NULL DEFAULT now()
@@ -125,6 +126,7 @@ CREATE TABLE IF NOT EXISTS orders (
                CHECK (status IN ('pending','confirmed','seeding','growing','ready','completed','cancelled')),
   pickup_date  date NOT NULL,
   total_amount decimal(10,2) NOT NULL DEFAULT 0,
+  final_amount decimal(10,2),
   notes        text,
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now()
@@ -140,7 +142,25 @@ CREATE TABLE IF NOT EXISTS order_items (
   quantity          decimal(10,2) NOT NULL,
   unit              text NOT NULL,
   price_at_order    decimal(10,2) NOT NULL,
-  slots_required    integer DEFAULT 0
+  slots_required    integer DEFAULT 0,
+  discount_rate     decimal(5,2) DEFAULT 0,
+  discount_amount   decimal(10,2) DEFAULT 0,
+  final_price       decimal(10,2)
+);
+
+-- ============================================
+-- 6.1 DISCOUNT LOGS (ประวัติการปรับส่วนลด)
+-- ============================================
+CREATE TABLE IF NOT EXISTS discount_logs (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  order_id        uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  order_item_id   uuid NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+  changed_by      uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  old_rate        decimal(5,2) DEFAULT 0,
+  new_rate        decimal(5,2) DEFAULT 0,
+  discount_amount decimal(10,2) DEFAULT 0,
+  note            text,
+  created_at      timestamptz NOT NULL DEFAULT now()
 );
 
 -- ============================================
@@ -287,6 +307,18 @@ CREATE POLICY "Customers create order items" ON order_items
         AND orders.customer_id = auth.uid()
     )
   );
+
+CREATE POLICY "Farmers and admins update order items" ON order_items
+  FOR UPDATE USING (get_my_role() IN ('farmer', 'admin'));
+
+-- Discount Logs: ทุกคนดูได้, Farmer/Admin จัดการได้
+ALTER TABLE discount_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Anyone can view discount logs" ON discount_logs;
+DROP POLICY IF EXISTS "Farmers and admins manage discount logs" ON discount_logs;
+CREATE POLICY "Anyone can view discount logs" ON discount_logs
+  FOR SELECT USING (true);
+CREATE POLICY "Farmers and admins manage discount logs" ON discount_logs
+  FOR ALL USING (get_my_role() IN ('farmer', 'admin'));
 
 -- Notifications: ดูเฉพาะของตัวเอง
 CREATE POLICY "Users view own notifications" ON notifications
@@ -557,12 +589,102 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
+-- บันทึกและปรับส่วนลดต่อรายการแบบ Atomic พร้อมบันทึกประวัติ (Discount System)
+CREATE OR REPLACE FUNCTION apply_item_discount(
+  p_order_item_id uuid,
+  p_discount_rate decimal,
+  p_note text DEFAULT NULL,
+  p_changed_by uuid DEFAULT NULL
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_item RECORD;
+  v_order RECORD;
+  v_old_rate decimal;
+  v_new_rate decimal;
+  v_total_before decimal;
+  v_discount_amount decimal;
+  v_final_price decimal;
+  v_order_final_amount decimal;
+BEGIN
+  SELECT * INTO v_item FROM order_items WHERE id = p_order_item_id;
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'Item not found');
+  END IF;
+
+  v_old_rate := COALESCE(v_item.discount_rate, 0);
+  v_new_rate := GREATEST(0, LEAST(100, COALESCE(p_discount_rate, 0)));
+  v_total_before := v_item.quantity * v_item.price_at_order;
+  v_discount_amount := ROUND((v_total_before * (v_new_rate / 100.0)), 2);
+  v_final_price := v_total_before - v_discount_amount;
+
+  -- 1. อัปเดตรายการสินค้า
+  UPDATE order_items
+  SET 
+    discount_rate = v_new_rate,
+    discount_amount = v_discount_amount,
+    final_price = v_final_price
+  WHERE id = p_order_item_id;
+
+  -- 2. บันทึก Log การแก้ไข
+  INSERT INTO discount_logs (
+    order_id,
+    order_item_id,
+    changed_by,
+    old_rate,
+    new_rate,
+    discount_amount,
+    note
+  ) VALUES (
+    v_item.order_id,
+    p_order_item_id,
+    p_changed_by,
+    v_old_rate,
+    v_new_rate,
+    v_discount_amount,
+    p_note
+  );
+
+  -- 3. หากออเดอร์ได้รับการยืนยันแล้ว ให้คำนวณและอัปเดตยอดสุทธิของ order (orders.final_amount) ทันที
+  SELECT * INTO v_order FROM orders WHERE id = v_item.order_id;
+  IF v_order.status NOT IN ('pending', 'cancelled') THEN
+    SELECT COALESCE(SUM(COALESCE(final_price, quantity * price_at_order)), 0)
+    INTO v_order_final_amount
+    FROM order_items
+    WHERE order_id = v_item.order_id;
+
+    UPDATE orders
+    SET final_amount = v_order_final_amount, updated_at = now()
+    WHERE id = v_item.order_id;
+  END IF;
+
+  RETURN json_build_object(
+    'success', true,
+    'discount_rate', v_new_rate,
+    'discount_amount', v_discount_amount,
+    'final_price', v_final_price
+  );
+END;
+$$;
+GRANT EXECUTE ON FUNCTION apply_item_discount(uuid, decimal, text, uuid) TO authenticated, anon;
+
 -- ============================================
 -- MIGRATION STATEMENTS (สำหรับอัปเดต DB เดิม)
 -- ============================================
 ALTER TABLE vegetable_types ADD COLUMN IF NOT EXISTS resource_id uuid REFERENCES resources(id) ON DELETE SET NULL;
 ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS vegetable_type_id uuid REFERENCES vegetable_types(id) ON DELETE SET NULL;
 ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS hydro_system text DEFAULT 'NFT';
+
+-- Migrations สำหรับระบบส่วนลดต่อรายการและประเภทลูกค้า
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS customer_type text DEFAULT 'ทั่วไป';
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_rate decimal(5,2) DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_amount decimal(10,2) DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS final_price decimal(10,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS final_amount decimal(10,2);
 
 -- ============================================
 -- SUPABASE STORAGE BUCKET

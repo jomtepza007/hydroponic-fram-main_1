@@ -21,7 +21,7 @@ export async function getMyOrders(customerId) {
 export async function getOrderById(orderId) {
   const queryWithEmail = `
     *,
-    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, email),
+    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, email, customer_type),
     order_items (
       *,
       vegetable_types (name, image_url, unit, harvest_days, category),
@@ -34,7 +34,7 @@ export async function getOrderById(orderId) {
   `
   const queryWithoutEmail = `
     *,
-    profiles!orders_customer_id_fkey (full_name, avatar_url, phone),
+    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, customer_type),
     order_items (
       *,
       vegetable_types (name, image_url, unit, harvest_days, category),
@@ -122,6 +122,33 @@ export async function updateOrderStatus(orderId, status, notes = '') {
   const updatePayload = { status, updated_at: new Date().toISOString() }
   if (notes) updatePayload.notes = notes
 
+  // เมื่อกดยืนยันออเดอร์ (confirmed) คำนวณและบันทึก final_amount ให้ลูกค้าเห็นราคาหลังหักส่วนลดทันที
+  if (status === 'confirmed') {
+    try {
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('quantity, price_at_order, discount_rate, discount_amount, final_price')
+        .eq('order_id', orderId)
+
+      if (items && items.length > 0) {
+        const finalSum = items.reduce((sum, item) => {
+          if (item.final_price != null && !isNaN(Number(item.final_price))) {
+            return sum + Number(item.final_price)
+          }
+          const orig = Number(item.quantity) * Number(item.price_at_order)
+          const disc = item.discount_amount != null
+            ? Number(item.discount_amount)
+            : Math.round(orig * ((Number(item.discount_rate) || 0) / 100) * 100) / 100
+          return sum + (orig - disc)
+        }, 0)
+
+        updatePayload.final_amount = Math.round(finalSum * 100) / 100
+      }
+    } catch (finalErr) {
+      console.warn('Could not pre-calculate final_amount on confirm:', finalErr)
+    }
+  }
+
   const { data, error } = await supabase
     .from('orders')
     .update(updatePayload)
@@ -140,6 +167,125 @@ export async function updateOrderStatus(orderId, status, notes = '') {
   }
 
   return data
+}
+
+/** ปรับส่วนลดต่อรายการสินค้า (order_items) พร้อมบันทึกประวัติ discount_logs */
+export async function applyOrderItemDiscount(orderId, orderItemId, discountRate, note = '', changedBy = null) {
+  const rate = Math.max(0, Math.min(100, Number(discountRate) || 0))
+
+  // 1. ลองเรียกผ่าน Stored Procedure apply_item_discount ก่อน (Atomic + Security Definer)
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('apply_item_discount', {
+      p_order_item_id: orderItemId,
+      p_discount_rate: rate,
+      p_note: note || null,
+      p_changed_by: changedBy || null,
+    })
+
+    if (!rpcError && rpcData && rpcData.success) {
+      return rpcData
+    }
+  } catch (rpcErr) {
+    console.warn('RPC apply_item_discount not available or errored, using client fallback:', rpcErr)
+  }
+
+  // 2. Client fallback กรณีไม่มี RPC
+  const { data: item, error: fetchErr } = await supabase
+    .from('order_items')
+    .select('id, quantity, price_at_order, discount_rate')
+    .eq('id', orderItemId)
+    .single()
+
+  if (fetchErr) throw fetchErr
+
+  const oldRate = Number(item.discount_rate) || 0
+  const origTotal = Number(item.quantity) * Number(item.price_at_order)
+  const discountAmount = Math.round(origTotal * (rate / 100) * 100) / 100
+  const finalPrice = Math.round((origTotal - discountAmount) * 100) / 100
+
+  // อัปเดต order_items
+  const { data: updatedItem, error: updateErr } = await supabase
+    .from('order_items')
+    .update({
+      discount_rate: rate,
+      discount_amount: discountAmount,
+      final_price: finalPrice,
+    })
+    .eq('id', orderItemId)
+    .select()
+    .single()
+
+  if (updateErr) throw updateErr
+
+  // บันทึก log ลง discount_logs
+  try {
+    await supabase.from('discount_logs').insert([{
+      order_id: orderId,
+      order_item_id: orderItemId,
+      changed_by: changedBy || null,
+      old_rate: oldRate,
+      new_rate: rate,
+      discount_amount: discountAmount,
+      note: note || null,
+    }])
+  } catch (logErr) {
+    console.warn('Could not record discount_log fallback:', logErr)
+  }
+
+  // หาก order นั้น confirm แล้ว ให้ sync orders.final_amount
+  try {
+    const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single()
+    if (ord && ord.status !== 'pending' && ord.status !== 'cancelled') {
+      const { data: allItems } = await supabase
+        .from('order_items')
+        .select('quantity, price_at_order, final_price')
+        .eq('order_id', orderId)
+
+      if (allItems) {
+        const orderFinal = allItems.reduce((acc, it) => {
+          return acc + (it.final_price != null ? Number(it.final_price) : Number(it.quantity) * Number(it.price_at_order))
+        }, 0)
+
+        await supabase
+          .from('orders')
+          .update({ final_amount: Math.round(orderFinal * 100) / 100, updated_at: new Date().toISOString() })
+          .eq('id', orderId)
+      }
+    }
+  } catch (syncErr) {
+    console.warn('Could not sync orders.final_amount:', syncErr)
+  }
+
+  return {
+    success: true,
+    discount_rate: rate,
+    discount_amount: discountAmount,
+    final_price: finalPrice,
+    item: updatedItem,
+  }
+}
+
+/** ดึงประวัติการปรับส่วนลดของออเดอร์ (discount_logs) */
+export async function getOrderDiscountLogs(orderId) {
+  try {
+    const { data, error } = await supabase
+      .from('discount_logs')
+      .select(`
+        *,
+        profiles:changed_by (full_name, role)
+      `)
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.warn('Could not load discount_logs:', error)
+      return []
+    }
+    return data || []
+  } catch (err) {
+    console.warn('Error fetching discount_logs:', err)
+    return []
+  }
 }
 
 /** ตัดสต็อก resource สำหรับ order_items ที่เป็น equipment และผูก resource_id ไว้ */

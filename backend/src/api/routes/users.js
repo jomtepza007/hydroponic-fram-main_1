@@ -45,4 +45,15 @@ router.put('/:id/ban', authMiddleware, requireRole('admin'), async (req, res) =>
   } catch (err) { res.status(400).json({ error: err.message }) }
 })
 
+// PUT /api/users/:id/customer-type — Admin
+router.put('/:id/customer-type', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { customer_type } = req.body
+    const type = customer_type?.trim() || 'ทั่วไป'
+    const { data, error } = await supabase.from('profiles').update({ customer_type: type }).eq('id', req.params.id).select().single()
+    if (error) throw error
+    res.json(data)
+  } catch (err) { res.status(400).json({ error: err.message }) }
+})
+
 export default router

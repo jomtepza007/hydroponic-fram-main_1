@@ -2,12 +2,19 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Camera, Upload, CheckCircle2, User, Phone, MapPin,
-  Truck, Package, Leaf, Calendar
+  Truck, Package, Leaf, Calendar, Percent, Tag, History, Edit3,
+  ChevronDown, ChevronUp, AlertCircle
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import StatusTimeline from '../../components/orders/StatusTimeline'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
-import { getOrderById, updateOrderStatus, addPlantingUpdate } from '../../api/orders'
+import {
+  getOrderById,
+  updateOrderStatus,
+  addPlantingUpdate,
+  applyOrderItemDiscount,
+  getOrderDiscountLogs
+} from '../../api/orders'
 import { supabase } from '../../api/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import {
@@ -32,6 +39,13 @@ export default function FarmerOrderDetail() {
   const [caption, setCaption] = useState('')
   const [updating, setUpdating] = useState(false)
 
+  // ส่วนลดต่อรายการ (Discount states)
+  const [discountInputs, setDiscountInputs] = useState({})
+  const [activeEditItemId, setActiveEditItemId] = useState(null)
+  const [savingDiscount, setSavingDiscount] = useState({})
+  const [discountLogs, setDiscountLogs] = useState([])
+  const [showLogs, setShowLogs] = useState(false)
+
   useEffect(() => {
     loadOrder()
   }, [id])
@@ -40,6 +54,22 @@ export default function FarmerOrderDetail() {
     try {
       const data = await getOrderById(id)
       setOrder(data)
+
+      // กำหนดค่าเริ่มต้นให้กับ discountInputs ตาม order_items
+      if (data?.order_items) {
+        const inputs = {}
+        data.order_items.forEach(item => {
+          inputs[item.id] = {
+            rate: item.discount_rate != null ? Number(item.discount_rate) : 0,
+            note: '',
+          }
+        })
+        setDiscountInputs(inputs)
+      }
+
+      // โหลดประวัติส่วนลด
+      const logs = await getOrderDiscountLogs(id)
+      setDiscountLogs(logs || [])
     } catch (err) {
       console.error(err)
     } finally {
@@ -88,6 +118,24 @@ export default function FarmerOrderDetail() {
       toast.error('เกิดข้อผิดพลาดในการอัปเดตสถานะ')
     } finally {
       setUpdating(false)
+    }
+  }
+
+  async function handleSaveDiscount(itemId) {
+    const input = discountInputs[itemId] || { rate: 0, note: '' }
+    const rate = Math.max(0, Math.min(100, Number(input.rate) || 0))
+    setSavingDiscount(prev => ({ ...prev, [itemId]: true }))
+
+    try {
+      await applyOrderItemDiscount(order.id, itemId, rate, input.note, user?.id)
+      toast.success(`บันทึกส่วนลด ${rate}% สำเร็จ 🏷️`)
+      setActiveEditItemId(null)
+      await loadOrder()
+    } catch (err) {
+      console.error(err)
+      toast.error('เกิดข้อผิดพลาดในการบันทึกส่วนลด')
+    } finally {
+      setSavingDiscount(prev => ({ ...prev, [itemId]: false }))
     }
   }
 
