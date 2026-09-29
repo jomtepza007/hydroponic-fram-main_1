@@ -342,100 +342,6 @@ export default function FarmerOrderDetail() {
             </div>
           </div>
 
-          {/* Action & Upload Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            {/* Update Status */}
-            <div className="card">
-              <h2 className="font-semibold text-forest-dark mb-4">อัปเดตสถานะ</h2>
-              {order?.status === 'waiting_cycle' ? (
-                /* ล็อค — ต้องยืนยันสร้างรอบปลูกก่อน */
-                <div className="flex flex-col items-center text-center py-4 gap-3">
-                  <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
-                    <Calendar className="w-6 h-6 text-amber-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-amber-700 mb-1">
-                      ต้องยืนยันสร้างรอบปลูกก่อน
-                    </p>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      ออเดอร์นี้ยังไม่มีรอบปลูก<br />กรุณาไปที่หน้าตารางรอบปลูก<br />แล้วกด "ยืนยันสร้างรอบปลูก" ก่อน
-                    </p>
-                  </div>
-                  <Link
-                    to="/farmer/schedule"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-all shadow-sm"
-                  >
-                    <Calendar className="w-4 h-4" />
-                    ไปหน้าตารางรอบปลูก
-                  </Link>
-                </div>
-              ) : nextStatus ? (
-                <div>
-                  <p className="text-sm text-gray-500 mb-4">
-                    สถานะถัดไป: <strong className="text-forest font-bold">{labels[nextStatus]}</strong>
-                  </p>
-                  <button
-                    id="btn-update-status"
-                    onClick={handleStatusUpdate}
-                    disabled={updating}
-                    className="btn-primary w-full"
-                  >
-                    {updating ? (
-                      <><div className="spinner w-4 h-4" /> กำลังอัปเดต...</>
-                    ) : (
-                      <><CheckCircle2 className="w-4 h-4" /> เปลี่ยนเป็น "{labels[nextStatus]}"</>
-                    )}
-                  </button>
-                </div>
-              ) : (
-                <div className="text-center py-6 text-gray-400">
-                  <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500" />
-                  <p className="text-sm font-semibold text-gray-700">
-                    {isEquipment ? 'ออเดอร์จัดส่งเรียบร้อยแล้ว' : 'ออเดอร์เสร็จสิ้นแล้ว'}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Upload Photo */}
-            <div className="card">
-              <h2 className="font-semibold text-forest-dark mb-4">
-                {isEquipment ? 'อัปโหลดรูปภาพสินค้า / หลักฐาน' : 'อัปโหลดรูปภาพการปลูก'}
-              </h2>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="คำอธิบายรูปภาพ (ไม่บังคับ)"
-                  value={caption}
-                  onChange={e => setCaption(e.target.value)}
-                  className="input text-sm"
-                  id="input-photo-caption"
-                />
-                <label className={`w-full flex flex-col items-center justify-center gap-2 p-6 border-2 border-dashed
-                  rounded-xl cursor-pointer transition-all
-                  ${uploading ? 'opacity-50 cursor-not-allowed border-gray-200' : 'border-primary-200 hover:border-forest hover:bg-primary-50'}`}>
-                  {uploading ? (
-                    <div className="spinner w-8 h-8" />
-                  ) : (
-                    <>
-                      <Camera className="w-8 h-8 text-primary-300" />
-                      <span className="text-sm text-gray-500 font-medium">คลิกเพื่อเลือกรูปภาพจากเครื่อง</span>
-                      <span className="text-xs text-gray-400">PNG, JPG, WebP</span>
-                    </>
-                  )}
-                  <input
-                    id="input-photo-upload"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handlePhotoUpload}
-                    disabled={uploading}
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-
           {/* Order Items & Discount Management */}
           <div className="card mb-6">
             <div className="flex items-center justify-between mb-4">
@@ -738,6 +644,100 @@ export default function FarmerOrderDetail() {
                 </div>
               )
             })()}
+          </div>
+
+          {/* Action & Upload Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            {/* Update Status */}
+            <div className="card">
+              <h2 className="font-semibold text-forest-dark mb-4">อัปเดตสถานะ</h2>
+              {order?.status === 'waiting_cycle' ? (
+                /* ล็อค — ต้องยืนยันสร้างรอบปลูกก่อน */
+                <div className="flex flex-col items-center text-center py-4 gap-3">
+                  <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
+                    <Calendar className="w-6 h-6 text-amber-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-700 mb-1">
+                      ต้องยืนยันสร้างรอบปลูกก่อน
+                    </p>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      ออเดอร์นี้ยังไม่มีรอบปลูก<br />กรุณาไปที่หน้าตารางรอบปลูก<br />แล้วกด "ยืนยันสร้างรอบปลูก" ก่อน
+                    </p>
+                  </div>
+                  <Link
+                    to="/farmer/schedule"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-all shadow-sm"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    ไปหน้าตารางรอบปลูก
+                  </Link>
+                </div>
+              ) : nextStatus ? (
+                <div>
+                  <p className="text-sm text-gray-500 mb-4">
+                    สถานะถัดไป: <strong className="text-forest font-bold">{labels[nextStatus]}</strong>
+                  </p>
+                  <button
+                    id="btn-update-status"
+                    onClick={handleStatusUpdate}
+                    disabled={updating}
+                    className="btn-primary w-full"
+                  >
+                    {updating ? (
+                      <><div className="spinner w-4 h-4" /> กำลังอัปเดต...</>
+                    ) : (
+                      <><CheckCircle2 className="w-4 h-4" /> เปลี่ยนเป็น "{labels[nextStatus]}"</>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-gray-400">
+                  <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500" />
+                  <p className="text-sm font-semibold text-gray-700">
+                    {isEquipment ? 'ออเดอร์จัดส่งเรียบร้อยแล้ว' : 'ออเดอร์เสร็จสิ้นแล้ว'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Upload Photo */}
+            <div className="card">
+              <h2 className="font-semibold text-forest-dark mb-4">
+                {isEquipment ? 'อัปโหลดรูปภาพสินค้า / หลักฐาน' : 'อัปโหลดรูปภาพการปลูก'}
+              </h2>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="คำอธิบายรูปภาพ (ไม่บังคับ)"
+                  value={caption}
+                  onChange={e => setCaption(e.target.value)}
+                  className="input text-sm"
+                  id="input-photo-caption"
+                />
+                <label className={`w-full flex flex-col items-center justify-center gap-2 p-6 border-2 border-dashed
+                  rounded-xl cursor-pointer transition-all
+                  ${uploading ? 'opacity-50 cursor-not-allowed border-gray-200' : 'border-primary-200 hover:border-forest hover:bg-primary-50'}`}>
+                  {uploading ? (
+                    <div className="spinner w-8 h-8" />
+                  ) : (
+                    <>
+                      <Camera className="w-8 h-8 text-primary-300" />
+                      <span className="text-sm text-gray-500 font-medium">คลิกเพื่อเลือกรูปภาพจากเครื่อง</span>
+                      <span className="text-xs text-gray-400">PNG, JPG, WebP</span>
+                    </>
+                  )}
+                  <input
+                    id="input-photo-upload"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handlePhotoUpload}
+                    disabled={uploading}
+                  />
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* Growth Photos */}
