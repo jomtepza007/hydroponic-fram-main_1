@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Plus, Pencil, PackageMinus, X } from 'lucide-react'
+import { Plus, Pencil, PackageMinus, X, Trash2, AlertTriangle } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import {
   getResources,
   createResource,
   updateResource,
+  deleteResource,
   addResourceTransaction,
 } from '../../api/resources'
 import { supabase } from '../../api/supabaseClient'
@@ -30,6 +31,10 @@ export default function AdminResources() {
   const [adjustTarget, setAdjustTarget] = useState(null)
   const [adjustForm, setAdjustForm] = useState({ transaction_type: 'in', quantity: 1, notes: '' })
   const [adjusting, setAdjusting] = useState(false)
+
+  // delete modal
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -105,6 +110,23 @@ export default function AdminResources() {
     } finally { setAdjusting(false) }
   }
 
+  // --- Delete Resource ---
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await deleteResource(deleteTarget.id)
+      toast.success(`ลบทรัพยากร "${deleteTarget.name}" สำเร็จ 🗑️`)
+      setDeleteTarget(null)
+      load()
+    } catch (err) {
+      console.error(err)
+      toast.error(err.message || 'เกิดข้อผิดพลาดในการลบทรัพยากร')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
@@ -160,7 +182,7 @@ export default function AdminResources() {
                         </div>
                       </td>
                       <td>
-                        <div className="flex gap-2">
+                        <div className="flex gap-1.5">
                           <button
                             id={`btn-edit-resource-${r.id}`}
                             onClick={() => openEdit(r)}
@@ -176,6 +198,14 @@ export default function AdminResources() {
                             title="ปรับสต็อก"
                           >
                             <PackageMinus className="w-4 h-4" />
+                          </button>
+                          <button
+                            id={`btn-delete-resource-${r.id}`}
+                            onClick={() => setDeleteTarget(r)}
+                            className="p-1.5 rounded-lg hover:bg-rose-50 text-gray-400 hover:text-rose-600 transition-colors"
+                            title="ลบทรัพยากร"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -304,6 +334,57 @@ export default function AdminResources() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====== Modal: Confirm Delete Resource ====== */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-gray-800">ยืนยันการลบทรัพยากร</h2>
+                <p className="text-xs text-gray-400">การดำเนินการนี้ไม่สามารถยกเลิกได้</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-rose-50/60 rounded-xl border border-rose-100 text-xs text-gray-700 space-y-1.5">
+              <p>
+                คุณต้องการลบทรัพยากร <strong>"{deleteTarget.name}"</strong> ({TYPE_LABEL[deleteTarget.type] || deleteTarget.type}) ใช่หรือไม่?
+              </p>
+              <div className="text-gray-500 text-[11px] space-y-0.5 pt-1 border-t border-rose-100">
+                <p>• สต็อกปัจจุบัน: <strong>{deleteTarget.current_qty} {deleteTarget.unit}</strong></p>
+                <p>• ระบบจะลบประวัติการเบิก/เติมของรายการนี้ และปลดการเชื่อมโยงกับผักหรืออุปกรณ์ที่ผูกไว้อัตโนมัติ</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="btn-secondary flex-1 text-sm py-2"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                id="btn-confirm-delete"
+                className="flex-1 py-2 px-4 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-sm flex items-center justify-center gap-1.5"
+              >
+                {deleting ? (
+                  <><div className="spinner w-4 h-4" /> กำลังลบ...</>
+                ) : (
+                  <><Trash2 className="w-4 h-4" /> ยืนยันลบ</>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

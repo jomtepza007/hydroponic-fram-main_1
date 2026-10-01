@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { signOut } from '../../api/auth'
+import NotificationDropdown from './NotificationDropdown'
 
 const adminLinks = [
   { to: '/admin', icon: LayoutDashboard, label: 'แดชบอร์ด', end: true },
@@ -42,16 +43,17 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       {/* Brand */}
-      <div className="px-5 py-6 border-b border-white/10">
+      <div className="px-5 py-5 border-b border-white/10 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
             <Leaf className="w-5 h-5 text-white" />
           </div>
           <div>
-            <p className="font-bold text-white text-base">HydroFarm</p>
+            <p className="font-bold text-white text-base leading-tight">HydroFarm</p>
             <p className="text-xs text-white/50">Management</p>
           </div>
         </div>
+        <NotificationDropdown dark={true} placement="sidebar" />
       </div>
 
       {/* Nav Links */}

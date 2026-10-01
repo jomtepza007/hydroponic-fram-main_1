@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MapPin, Plus, Pencil, X, Trash2 } from 'lucide-react'
+import { MapPin, Plus, Pencil, X, Trash2, Layers, AlertTriangle, CheckCircle, PieChart } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import { supabase } from '../../api/supabaseClient'
 import toast from 'react-hot-toast'
@@ -9,6 +9,7 @@ const EMPTY_FORM = { name: '', zone_code: '', total_slots: 100, vegetable_type_i
 export default function AdminGrowingAreas() {
   const [areas, setAreas] = useState([])
   const [vegetables, setVegetables] = useState([])
+  const [cycles, setCycles] = useState([])
   const [loading, setLoading] = useState(true)
 
   const [showForm, setShowForm] = useState(false)
@@ -21,12 +22,14 @@ export default function AdminGrowingAreas() {
   async function load() {
     setLoading(true)
     try {
-      const [{ data: areasData }, { data: vegsData }] = await Promise.all([
+      const [{ data: areasData }, { data: vegsData }, { data: cyclesData }] = await Promise.all([
         supabase.from('growing_areas').select('*, vegetable_types(name)').order('name'),
         supabase.from('vegetable_types').select('id, name').eq('category', 'vegetable').eq('is_active', true).order('name'),
+        supabase.from('planting_cycles').select('growing_area_id, slots_used, status').in('status', ['scheduled', 'seeding', 'growing']),
       ])
       setAreas(areasData || [])
       setVegetables(vegsData || [])
+      setCycles(cyclesData || [])
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }
@@ -100,60 +103,138 @@ export default function AdminGrowingAreas() {
             </button>
           </div>
 
+          {/* Summary Stat Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {(() => {
+              const totalSlotsAll = areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
+              const totalUsedSlotsAll = areas.reduce((sum, a) => {
+                const areaCycles = cycles.filter(c => c.growing_area_id === a.id)
+                const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0) || Number(a.current_slots_used) || 0
+                return sum + used
+              }, 0)
+              const overallOccupancyRate = totalSlotsAll > 0 ? Math.round((totalUsedSlotsAll / totalSlotsAll) * 100) : 0
+              const activeAreasCount = areas.filter(a => a.is_active).length
+
+              return [
+                { label: 'แปลงปลูกทั้งหมด', value: `${areas.length} แปลง`, sub: `เปิดใช้งาน ${activeAreasCount} แปลง`, color: 'text-forest' },
+                { label: 'ช่องปลูกรวมทั้งฟาร์ม', value: `${totalSlotsAll.toLocaleString()} ช่อง`, sub: 'ความจุสูงสุด', color: 'text-blue-600' },
+                { label: 'ช่องปลูกที่ใช้งานอยู่', value: `${totalUsedSlotsAll.toLocaleString()} ช่อง`, sub: `ว่าง ${Math.max(0, totalSlotsAll - totalUsedSlotsAll).toLocaleString()} ช่อง`, color: 'text-amber-600' },
+                { label: 'อัตราการใช้งานรวม', value: `${overallOccupancyRate}%`, sub: overallOccupancyRate >= 80 ? '⚠️ เริ่มหนาแน่น' : '✅ กำลังดี', color: overallOccupancyRate >= 80 ? 'text-rose-600' : 'text-forest font-black' },
+              ].map(s => (
+                <div key={s.label} className="card text-center">
+                  <p className={`text-2xl lg:text-3xl font-bold ${s.color}`}>{s.value}</p>
+                  <p className="text-xs font-semibold text-gray-700 mt-1">{s.label}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{s.sub}</p>
+                </div>
+              ))
+            })()}
+          </div>
+
           {loading ? (
             <div className="spinner w-8 h-8" />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {areas.map(a => (
-                <div key={a.id} className={`card-hover relative ${!a.is_active ? 'opacity-60' : ''}`}>
-                  {/* Action buttons */}
-                  <div className="absolute top-3 right-3 flex gap-1">
-                    <button
-                      id={`btn-edit-area-${a.id}`}
-                      onClick={() => openEdit(a)}
-                      className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-forest transition-colors"
-                      title="แก้ไข"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      id={`btn-delete-area-${a.id}`}
-                      onClick={() => handleDelete(a.id)}
-                      className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                      title="ลบ"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {areas.map(a => {
+                const areaCycles = cycles.filter(c => c.growing_area_id === a.id)
+                const slotsUsed = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0) || Number(a.current_slots_used) || 0
+                const totalSlots = Number(a.total_slots) || 100
+                const occupancy = Math.min(100, Math.round((slotsUsed / totalSlots) * 100))
+                const remainingSlots = Math.max(0, totalSlots - slotsUsed)
 
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${a.is_active ? 'bg-primary-50' : 'bg-gray-100'}`}>
-                      <MapPin className={`w-5 h-5 ${a.is_active ? 'text-forest' : 'text-gray-400'}`} />
+                let statusColor = 'bg-emerald-500'
+                let badgeBg = 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                let statusLabel = 'ปกติ'
+                if (occupancy >= 90) {
+                  statusColor = 'bg-red-500'
+                  badgeBg = 'bg-red-50 text-red-700 border-red-200'
+                  statusLabel = 'วิกฤต 90%+'
+                } else if (occupancy >= 75) {
+                  statusColor = 'bg-amber-500'
+                  badgeBg = 'bg-amber-50 text-amber-700 border-amber-200'
+                  statusLabel = 'ใกล้เต็ม 75%+'
+                }
+
+                return (
+                  <div key={a.id} className={`card-hover relative flex flex-col justify-between ${!a.is_active ? 'opacity-60 bg-gray-50' : 'bg-white'}`}>
+                    {/* Action buttons */}
+                    <div className="absolute top-3 right-3 flex gap-1 z-10">
+                      <button
+                        id={`btn-edit-area-${a.id}`}
+                        onClick={() => openEdit(a)}
+                        className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-forest transition-colors"
+                        title="แก้ไข"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        id={`btn-delete-area-${a.id}`}
+                        onClick={() => handleDelete(a.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                        title="ลบ"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
+
                     <div>
-                      <h3 className="font-bold text-gray-800">{a.name}</h3>
-                      <p className="text-xs text-gray-400">{a.zone_code || 'ไม่มีรหัสโซน'}</p>
-                    </div>
-                  </div>
+                      {/* Title & Zone */}
+                      <div className="flex items-center gap-3 mb-4 pr-14">
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${a.is_active ? 'bg-primary-50' : 'bg-gray-100'}`}>
+                          <MapPin className={`w-5 h-5 ${a.is_active ? 'text-forest' : 'text-gray-400'}`} />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-gray-800 truncate">{a.name}</h3>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-xs text-gray-400">{a.zone_code || 'ไม่มีรหัสโซน'}</span>
+                            <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${a.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {a.is_active ? 'ใช้งาน' : 'ปิด'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
 
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-400">ช่องปลูก</span>
-                      <span className="font-semibold text-forest">{a.total_slots} ช่อง</span>
+                      {/* Info lines */}
+                      <div className="space-y-2 text-xs mb-4">
+                        <div className="flex items-center justify-between text-gray-500">
+                          <span>ผักประจำแปลง:</span>
+                          <span className="font-medium text-gray-800">{a.vegetable_types?.name || 'แปลงทั่วไป (ทุกชนิด)'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-gray-500">
+                          <span>รอบปลูกที่กำลังปลูก:</span>
+                          <span className="font-medium text-forest">{areaCycles.length} รอบ</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-400">ผักที่ปลูก</span>
-                      <span className="text-gray-700">{a.vegetable_types?.name || '-'}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-400">สถานะ</span>
-                      <span className={`badge ${a.is_active ? 'badge-confirmed' : 'badge-cancelled'}`}>
-                        {a.is_active ? 'ใช้งาน' : 'ปิด'}
-                      </span>
+
+                    {/* Occupancy Section (Progress Bar) */}
+                    <div className="pt-3 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs mb-1.5">
+                        <span className="font-semibold text-gray-700">การใช้งานพื้นที่:</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${badgeBg}`}>
+                            {statusLabel}
+                          </span>
+                          <span className="font-bold text-gray-900 text-sm">{occupancy}%</span>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden mb-2">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${statusColor}`}
+                          style={{ width: `${occupancy}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-gray-400">
+                        <span>จองแล้ว <strong>{slotsUsed}</strong> / {totalSlots} ช่อง</span>
+                        <span>ว่าง <strong>{remainingSlots}</strong> ช่อง</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
+
 
               {/* Add new card */}
               <div

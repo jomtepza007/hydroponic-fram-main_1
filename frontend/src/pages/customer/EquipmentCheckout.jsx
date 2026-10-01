@@ -17,6 +17,7 @@ export default function EquipmentCheckout() {
     recipient_name: user?.user_metadata?.full_name || '',
     phone: '',
     address: '',
+    subdistrict: '',
     district: '',
     province: '',
     postal_code: '',
@@ -37,7 +38,15 @@ export default function EquipmentCheckout() {
     deliveryDate.setDate(deliveryDate.getDate() + 3)
     const pickupDate = deliveryDate.toISOString().split('T')[0]
 
-    const shippingAddress = `${form.address} ${form.district} ${form.province} ${form.postal_code}`
+    const addressParts = [
+      form.address,
+      form.subdistrict ? `ต./แขวง ${form.subdistrict}` : '',
+      form.district ? `อ./เขต ${form.district}` : '',
+      form.province ? `จ.${form.province}` : '',
+      form.postal_code,
+    ].filter(Boolean)
+
+    const shippingAddress = addressParts.join(' ')
 
     try {
       // สร้าง order
@@ -213,7 +222,7 @@ export default function EquipmentCheckout() {
                   ))}
                 </div>
                 <button onClick={() => setStep(2)} className="btn-primary w-full">
-                  ดำเนินการต่อ — กรอกที่อยู่จัดส่ง
+                   กรอกที่อยู่จัดส่ง
                 </button>
               </div>
             )}
@@ -241,18 +250,51 @@ export default function EquipmentCheckout() {
                   <input required name="address" value={form.address} onChange={handleChange} className="input" placeholder="เช่น 123/4 ถ.พหลโยธิน" />
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="label">แขวง/ตำบล *</label>
-                    <input required name="district" value={form.district} onChange={handleChange} className="input" />
+                    <label className="label">แขวง / ตำบล *</label>
+                    <input
+                      required
+                      name="subdistrict"
+                      value={form.subdistrict}
+                      onChange={handleChange}
+                      className="input"
+                      placeholder="เช่น ลาดพร้าว / ดอนแก้ว"
+                    />
                   </div>
                   <div>
-                    <label className="label">เขต/จังหวัด *</label>
-                    <input required name="province" value={form.province} onChange={handleChange} className="input" />
+                    <label className="label">เขต / อำเภอ *</label>
+                    <input
+                      required
+                      name="district"
+                      value={form.district}
+                      onChange={handleChange}
+                      className="input"
+                      placeholder="เช่น จตุจักร / เมือง"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">จังหวัด *</label>
+                    <input
+                      required
+                      name="province"
+                      value={form.province}
+                      onChange={handleChange}
+                      className="input"
+                      placeholder="เช่น กรุงเทพมหานคร / เชียงใหม่"
+                    />
                   </div>
                   <div>
                     <label className="label">รหัสไปรษณีย์ *</label>
-                    <input required name="postal_code" value={form.postal_code} onChange={handleChange} className="input" maxLength={5} />
+                    <input
+                      required
+                      name="postal_code"
+                      value={form.postal_code}
+                      onChange={handleChange}
+                      className="input"
+                      placeholder="เช่น 10900"
+                      maxLength={5}
+                    />
                   </div>
                 </div>
 

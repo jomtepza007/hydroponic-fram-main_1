@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Clock, Truck, PackageCheck, FileText, Check } from 'lucide-react'
+import { CheckCircle2, Circle, Clock, Truck, PackageCheck, FileText, Check, XCircle } from 'lucide-react'
 import {
   ORDER_STATUS_LABELS,
   STATUS_FLOW,
@@ -10,6 +10,30 @@ import {
  * StatusTimeline — แสดง timeline ความคืบหน้าคำสั่งซื้อ/การปลูก
  */
 export default function StatusTimeline({ currentStatus, isEquipment = false }) {
+  // กรณีออเดอร์ถูกยกเลิก แสดงการ์ดสถานะยกเลิกที่ชัดเจน
+  if (currentStatus === 'cancelled') {
+    return (
+      <div className="w-full">
+        <div className="flex items-center gap-3 p-4 bg-red-50/90 border border-red-200 rounded-2xl animate-fade-in">
+          <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0 text-red-600">
+            <XCircle className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-bold text-red-700">คำสั่งซื้อนี้ถูกยกเลิกแล้ว</h4>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-200 text-red-800">
+                ยกเลิก
+              </span>
+            </div>
+            <p className="text-xs text-red-600/80 mt-0.5">
+              คำสั่งซื้อนี้ถูกยกเลิกการดำเนินการแล้ว หากมีข้อสงสัยหรือต้องการสั่งซื้อใหม่ กรุณาติดต่อทางฟาร์ม
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const flow = isEquipment ? EQUIPMENT_STATUS_FLOW : STATUS_FLOW
   const labels = isEquipment ? EQUIPMENT_STATUS_LABELS : ORDER_STATUS_LABELS
   const currentIdx = flow.indexOf(currentStatus)

@@ -112,3 +112,37 @@ export async function updateResource(id, updates) {
   if (error) throw error
   return data
 }
+
+/** Admin: ลบทรัพยากรออกจากระบบ */
+export async function deleteResource(id) {
+  // 1. ปลดการผูก resource_id ใน vegetable_types ออกก่อน
+  try {
+    await supabase
+      .from('vegetable_types')
+      .update({ resource_id: null })
+      .eq('resource_id', id)
+  } catch (err) {
+    console.warn('Could not unbind vegetable_types resource_id:', err)
+  }
+
+  // 2. ลบประวัติ transactions ที่ผูกกับ resource นี้
+  try {
+    await supabase
+      .from('resource_transactions')
+      .delete()
+      .eq('resource_id', id)
+  } catch (err) {
+    console.warn('Could not delete resource_transactions:', err)
+  }
+
+  // 3. ลบทรัพยากรออกจากตาราง resources
+  const { data, error } = await supabase
+    .from('resources')
+    .delete()
+    .eq('id', id)
+    .select()
+
+  if (error) throw error
+  return data
+}
+

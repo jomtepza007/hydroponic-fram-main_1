@@ -3,7 +3,8 @@ import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Camera, CheckCircle2, User, Phone,
   Leaf, Calendar, Percent, Tag, History, Edit3,
-  ChevronDown, ChevronUp, AlertCircle
+  ChevronDown, ChevronUp, AlertCircle, X, XCircle, AlertTriangle,
+  Coins, Lock, Mail
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import StatusTimeline from '../../components/orders/StatusTimeline'
@@ -13,8 +14,11 @@ import {
   updateOrderStatus,
   addPlantingUpdate,
   applyOrderItemDiscount,
+  applyOrderDiscount,
   getOrderDiscountLogs
 } from '../../api/orders'
+import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
+import { notifyPlantingPhoto } from '../../api/notifications'
 import { supabase } from '../../api/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import {
@@ -39,12 +43,24 @@ export default function FarmerOrderDetail() {
   const [caption, setCaption] = useState('')
   const [updating, setUpdating] = useState(false)
 
+  // ยกเลิกคำสั่งซื้อโดยเกษตรกร
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+
   // ส่วนลดต่อรายการ (Discount states)
   const [discountInputs, setDiscountInputs] = useState({})
   const [activeEditItemId, setActiveEditItemId] = useState(null)
   const [savingDiscount, setSavingDiscount] = useState({})
   const [discountLogs, setDiscountLogs] = useState([])
   const [showLogs, setShowLogs] = useState(false)
+
+  // ส่วนลดทั้งออเดอร์ (Whole-Order Discount states)
+  const [orderDiscountType, setOrderDiscountType] = useState('amount') // 'amount' | 'percent'
+  const [orderDiscountValue, setOrderDiscountValue] = useState('')
+  const [orderDiscountNote, setOrderDiscountNote] = useState('')
+  const [isEditingOrderDiscount, setIsEditingOrderDiscount] = useState(false)
+  const [savingOrderDiscount, setSavingOrderDiscount] = useState(false)
 
   useEffect(() => {
     loadOrder()
@@ -67,6 +83,13 @@ export default function FarmerOrderDetail() {
         setDiscountInputs(inputs)
       }
 
+      // กำหนดค่าเริ่มต้นให้กับส่วนลดทั้งออเดอร์
+      if (data) {
+        setOrderDiscountType(data.order_discount_type || 'amount')
+        setOrderDiscountValue(data.order_discount_value != null && Number(data.order_discount_value) > 0 ? Number(data.order_discount_value) : '')
+        setOrderDiscountNote(data.order_discount_note || '')
+      }
+
       // โหลดประวัติส่วนลด
       const logs = await getOrderDiscountLogs(id)
       setDiscountLogs(logs || [])
@@ -85,7 +108,7 @@ export default function FarmerOrderDetail() {
     if (!nextStatus) return
     setUpdating(true)
     try {
-      await updateOrderStatus(id, nextStatus)
+      await updateOrderStatus(id, nextStatus, '', isEquipment)
 
       // sync สถานะ planting_cycles ให้ตรงกับ order (สำหรับผัก)
       if (!isEquipment) {
@@ -121,6 +144,59 @@ export default function FarmerOrderDetail() {
     }
   }
 
+  // เกษตรกรกดยกเลิกออเดอร์
+  async function handleFarmerCancelOrder() {
+    if (!order?.id) return
+    setCancelling(true)
+    const reasonText = cancelReason.trim() || 'ฟาร์มขอยกเลิกคำสั่งซื้อเนื่องจากมีเหตุขัดข้อง'
+    const noteEntry = `[ฟาร์มยกเลิกคำสั่งซื้อ: ${reasonText} (${formatDateTh(new Date())})]`
+    const updatedNotes = order.notes ? `${order.notes}\n${noteEntry}` : noteEntry
+
+    try {
+      // 1. อัปเดตสถานะ order เป็น cancelled
+      await updateOrderStatus(order.id, 'cancelled', updatedNotes, isEquipment)
+
+      // 2. ถ้าเป็นผัก ให้ยกเลิกรอบปลูก (planting_cycles) ที่เกี่ยวข้อง
+      if (!isEquipment) {
+        const cycleIds = order.order_items
+          ?.flatMap(item => item.planting_cycles?.map(c => c.id) || [])
+          .filter(Boolean)
+        if (cycleIds.length > 0) {
+          await supabase
+            .from('planting_cycles')
+            .update({ status: 'cancelled' })
+            .in('id', cycleIds)
+        }
+      }
+
+      // 3. ส่งการแจ้งเตือนพิเศษไปยังลูกค้าพร้อมระบุเหตุผล
+      if (order.customer_id) {
+        try {
+          const shortId = order.id.slice(0, 8).toUpperCase()
+          await supabase.from('notifications').insert([{
+            user_id: order.customer_id,
+            title: `❌ ออเดอร์ #${shortId} ถูกยกเลิกโดยฟาร์ม`,
+            message: `ทางฟาร์มมีความจำเป็นต้องยกเลิกออเดอร์ เนื่องจาก: "${reasonText}" ขออภัยในความไม่สะดวก`,
+            type: 'order_status',
+            related_id: order.id,
+            is_read: false,
+          }])
+        } catch (notifErr) {
+          console.warn('Customer cancel notification error:', notifErr)
+        }
+      }
+
+      toast.success('ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว')
+      setShowCancelModal(false)
+      await loadOrder()
+    } catch (err) {
+      console.error(err)
+      toast.error('เกิดข้อผิดพลาดในการยกเลิกคำสั่งซื้อ')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   async function handleSaveDiscount(itemId) {
     const input = discountInputs[itemId] || { rate: 0, note: '' }
     const rate = Math.max(0, Math.min(100, Number(input.rate) || 0))
@@ -136,6 +212,32 @@ export default function FarmerOrderDetail() {
       toast.error('เกิดข้อผิดพลาดในการบันทึกส่วนลด')
     } finally {
       setSavingDiscount(prev => ({ ...prev, [itemId]: false }))
+    }
+  }
+
+  async function handleSaveOrderDiscount() {
+    if (!order?.id) return
+    const val = Math.max(0, Number(orderDiscountValue) || 0)
+    setSavingOrderDiscount(true)
+    try {
+      await applyOrderDiscount(order.id, {
+        discountType: val > 0 ? orderDiscountType : null,
+        discountValue: val,
+        note: orderDiscountNote,
+        changedBy: user?.id,
+      })
+      toast.success(
+        val > 0
+          ? `บันทึกส่วนลดทั้งออเดอร์ ${orderDiscountType === 'percent' ? `${val}%` : `฿${val.toLocaleString()}`} สำเร็จ 🏷️`
+          : 'ล้างส่วนลดทั้งออเดอร์เรียบร้อยแล้ว'
+      )
+      setIsEditingOrderDiscount(false)
+      await loadOrder()
+    } catch (err) {
+      console.error(err)
+      toast.error(err.message || 'เกิดข้อผิดพลาดในการบันทึกส่วนลดทั้งออเดอร์')
+    } finally {
+      setSavingOrderDiscount(false)
     }
   }
 
@@ -224,6 +326,15 @@ export default function FarmerOrderDetail() {
         console.warn('Relational planting_update save note:', cycleErr)
       }
 
+      // 5. ส่งการแจ้งเตือนไปยังลูกค้าเมื่อมีรูปภาพการปลูกใหม่
+      try {
+        if (order?.customer_id) {
+          await notifyPlantingPhoto(order.id, order.customer_id, photoCaption)
+        }
+      } catch (notifErr) {
+        console.warn('Could not send planting photo notification:', notifErr)
+      }
+
       toast.success('อัปโหลดรูปภาพสำเร็จ 📸')
       setCaption('')
       await loadOrder()
@@ -300,32 +411,64 @@ export default function FarmerOrderDetail() {
               ข้อมูลลูกค้า & การจัดส่ง
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-3.5 bg-gray-50 rounded-xl">
-                <p className="text-xs text-gray-400 mb-1">ชื่อลูกค้า</p>
-                <div className="flex items-center gap-2.5">
-                  {order.profiles?.avatar_url ? (
-                    <img src={order.profiles.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-9 h-9 rounded-full bg-mint-100 text-forest font-bold flex items-center justify-center text-sm">
-                      {customerName.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-gray-800 text-base">{customerName}</p>
-                      <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-purple-100 text-purple-700">
-                        🏷️ {order.profiles?.customer_type || 'ทั่วไป'}
+              {(() => {
+                const typeCfg = getCustomerTypeConfig(order.profiles?.customer_type)
+                const TypeIcon = typeCfg.icon
+                return (
+                  <div className={`rounded-xl border ${typeCfg.cardBorder} ${typeCfg.cardBg} overflow-hidden shadow-xs transition-all`}>
+                    {/* หัวกรอบที่เป็นสีตามแท็กที่กำกับ พร้อมสัญลักษณ์ที่ชัดเจนและเด่นชัด */}
+                    <div className={`px-3.5 py-1.5 flex items-center justify-between text-xs font-bold ${typeCfg.headerBg} shadow-2xs`}>
+                      <div className="flex items-center gap-1.5">
+                        <TypeIcon className="w-3.5 h-3.5" />
+                        <span>ประเภทลูกค้า: {typeCfg.title}</span>
+                      </div>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/20 text-white font-semibold backdrop-blur-xs flex items-center gap-1">
+                        <span>{typeCfg.emoji}</span>
+                        <span>{typeCfg.label}</span>
                       </span>
                     </div>
-                    {customerPhone && (
-                      <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                        <Phone className="w-3 h-3 text-forest" />
-                        {customerPhone}
-                      </p>
-                    )}
+
+                    {/* ข้อมูลลูกค้าด้านใน */}
+                    <div className="p-3.5">
+                      <p className="text-xs text-gray-400 mb-1.5 font-medium">ชื่อลูกค้า</p>
+                      <div className="flex items-center gap-3">
+                        {order.profiles?.avatar_url ? (
+                          <img
+                            src={order.profiles.avatar_url}
+                            alt=""
+                            className={`w-11 h-11 rounded-full object-cover ${typeCfg.avatarRing}`}
+                          />
+                        ) : (
+                          <div className={`w-11 h-11 rounded-full ${typeCfg.avatarRing} font-bold flex items-center justify-center text-base shadow-2xs`}>
+                            {customerName.slice(0, 1).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-bold text-gray-800 text-base truncate">{customerName}</p>
+                            <span className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass}`}>
+                              <span>{typeCfg.emoji}</span>
+                              <span>{typeCfg.label}</span>
+                            </span>
+                          </div>
+                          {customerPhone && (
+                            <p className="text-xs text-gray-600 flex items-center gap-1 mt-1 font-medium">
+                              <Phone className="w-3 h-3 text-forest" />
+                              <span>{customerPhone}</span>
+                            </p>
+                          )}
+                          {order.profiles?.email && (
+                            <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5 truncate">
+                              <Mail className="w-3 h-3 text-gray-400" />
+                              <span>{order.profiles.email}</span>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )
+              })()}
 
               <div className="p-3.5 bg-gray-50 rounded-xl">
                 <p className="text-xs text-gray-400 mb-1">
@@ -343,58 +486,88 @@ export default function FarmerOrderDetail() {
           </div>
 
           {/* Order Items & Discount Management */}
-          <div className="card mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="font-semibold text-forest-dark flex items-center gap-2">
-                  <Tag className="w-4 h-4 text-forest" />
-                  รายการสินค้า & การกำหนดส่วนลด
-                </h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  ท่านสามารถกำหนดส่วนลดแบบเปอร์เซ็นต์แยกตามแต่ละรายการสินค้าได้อิสระ
-                </p>
-              </div>
-              {discountLogs.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setShowLogs(!showLogs)}
-                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors font-medium"
-                >
-                  <History className="w-3.5 h-3.5 text-forest" />
-                  ประวัติส่วนลด ({discountLogs.length})
-                  {showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                </button>
-              )}
-            </div>
-
-            {/* Logs Drawer/Accordion */}
-            {showLogs && discountLogs.length > 0 && (
-              <div className="mb-4 p-3.5 bg-gray-50 border border-gray-200 rounded-xl space-y-2 text-xs">
-                <p className="font-bold text-gray-700 flex items-center gap-1.5">
-                  <History className="w-3.5 h-3.5 text-forest" />
-                  ประวัติการปรับส่วนลด
-                </p>
-                <div className="divide-y divide-gray-200">
-                  {discountLogs.map(log => {
-                    const itemMatch = order.order_items?.find(it => it.id === log.order_item_id)
-                    const itemName = itemMatch?.vegetable_types?.name || 'รายการสินค้า'
-                    return (
-                      <div key={log.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                        <div>
-                          <span className="font-semibold text-gray-800">{itemName}: </span>
-                          <span className="text-gray-500">{log.old_rate}% → </span>
-                          <strong className="text-forest font-bold">{log.new_rate}%</strong>
-                          {log.note && <span className="text-gray-500 italic ml-2">({log.note})</span>}
-                        </div>
-                        <div className="text-gray-400 text-[11px]">
-                          โดย {log.profiles?.full_name || 'ผู้ดูแลระบบ'} ({formatDateTh(log.created_at, 'd MMM yyyy HH:mm')})
-                        </div>
-                      </div>
-                    )
-                  })}
+          {(() => {
+            const isDiscountEditable = ['waiting_cycle', 'pending', 'scheduling'].includes(order.status)
+            return (
+              <div className="card mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-semibold text-forest-dark flex items-center gap-2">
+                        <Tag className="w-4 h-4 text-forest" />
+                        รายการสินค้า & การกำหนดส่วนลด
+                      </h2>
+                      {isDiscountEditable ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                          แก้ไขส่วนลดได้ (ก่อนยืนยัน)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-gray-100 text-gray-600 border border-gray-200 flex items-center gap-1">
+                          <Lock className="w-2.5 h-2.5" /> ล็อกแล้ว
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {isDiscountEditable
+                        ? 'ท่านสามารถปรับส่วนลดต่อรายการ หรือกำหนดส่วนลดรวมทั้งออเดอร์ได้อิสระ ก่อนกดยืนยันออเดอร์'
+                        : 'ออเดอร์นี้ยืนยันแล้ว ส่วนลดถูกล็อกเพื่อรักษาความถูกต้องของยอดชำระที่ลูกค้าเห็น'}
+                    </p>
+                  </div>
+                  {discountLogs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLogs(!showLogs)}
+                      className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors font-medium self-start sm:self-auto"
+                    >
+                      <History className="w-3.5 h-3.5 text-forest" />
+                      ประวัติส่วนลด ({discountLogs.length})
+                      {showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
+
+                {/* Logs Drawer/Accordion */}
+                {showLogs && discountLogs.length > 0 && (
+                  <div className="mb-4 p-3.5 bg-gray-50 border border-gray-200 rounded-xl space-y-2 text-xs">
+                    <p className="font-bold text-gray-700 flex items-center gap-1.5">
+                      <History className="w-3.5 h-3.5 text-forest" />
+                      ประวัติการปรับส่วนลด
+                    </p>
+                    <div className="divide-y divide-gray-200">
+                      {discountLogs.map(log => {
+                        const isOrderLevel = !log.order_item_id || log.discount_type?.startsWith('order_')
+                        const itemMatch = order.order_items?.find(it => it.id === log.order_item_id)
+                        const itemName = isOrderLevel ? '🏷️ ส่วนลดทั้งออเดอร์' : (itemMatch?.vegetable_types?.name || 'รายการสินค้า')
+                        return (
+                          <div key={log.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                            <div>
+                              <span className="font-semibold text-gray-800">{itemName}: </span>
+                              {isOrderLevel ? (
+                                <strong className="text-forest font-bold">
+                                  {log.discount_type === 'order_percent'
+                                    ? `ลด ${log.discount_value}% (-฿${Number(log.discount_amount || 0).toLocaleString()})`
+                                    : log.discount_type === 'order_clear'
+                                    ? 'ล้างส่วนลด'
+                                    : `ลด ฿${Number(log.discount_amount || 0).toLocaleString()}`
+                                  }
+                                </strong>
+                              ) : (
+                                <>
+                                  <span className="text-gray-500">{log.old_rate}% → </span>
+                                  <strong className="text-forest font-bold">{log.new_rate}%</strong>
+                                </>
+                              )}
+                              {log.note && <span className="text-gray-500 italic ml-2">({log.note})</span>}
+                            </div>
+                            <div className="text-gray-400 text-[11px]">
+                              โดย {log.profiles?.full_name || 'ผู้ดูแลระบบ'} ({formatDateTh(log.created_at, 'd MMM yyyy HH:mm')})
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
 
             <div className="space-y-4">
               {order.order_items?.map(item => {
@@ -460,22 +633,28 @@ export default function FarmerOrderDetail() {
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => setActiveEditItemId(isEditing ? null : item.id)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all
-                            ${isEditing
-                              ? 'bg-gray-200 text-gray-700'
-                              : 'bg-white border border-gray-200 text-forest hover:bg-forest hover:text-white shadow-2xs'}`}
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          {isEditing ? 'ปิด' : itemRate > 0 ? 'แก้ส่วนลด' : 'ให้ส่วนลด'}
-                        </button>
+                        {isDiscountEditable ? (
+                          <button
+                            type="button"
+                            onClick={() => setActiveEditItemId(isEditing ? null : item.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all
+                              ${isEditing
+                                ? 'bg-gray-200 text-gray-700'
+                                : 'bg-white border border-gray-200 text-forest hover:bg-forest hover:text-white shadow-2xs'}`}
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            {isEditing ? 'ปิด' : itemRate > 0 ? 'แก้ส่วนลด' : 'ให้ส่วนลด'}
+                          </button>
+                        ) : itemRate > 0 ? (
+                          <span className="text-xs text-gray-400 flex items-center gap-1 bg-gray-100 px-2 py-1 rounded-lg">
+                            <Lock className="w-3 h-3 text-gray-400" /> ล็อกแล้ว
+                          </span>
+                        ) : null}
                       </div>
                     </div>
 
                     {/* Inline Discount Editor */}
-                    {isEditing && (
+                    {isEditing && isDiscountEditable && (
                       <div className="mt-3 pt-3 border-t border-gray-200/80 bg-white p-3 rounded-lg border shadow-xs space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
@@ -591,10 +770,245 @@ export default function FarmerOrderDetail() {
               })}
             </div>
 
+            {/* ส่วนลดทั้งออเดอร์ (Whole-Order Discount Section) */}
+            {(() => {
+              const currentOrderDiscType = order.order_discount_type || 'amount'
+              const currentOrderDiscVal = Number(order.order_discount_value) || 0
+              const currentOrderDiscAmt = Number(order.order_discount_amount) || 0
+              const hasOrderDiscount = currentOrderDiscAmt > 0
+
+              const itemsSubtotal = order.order_items?.reduce((sum, it) => {
+                const itOrig = Number(it.quantity) * Number(it.price_at_order)
+                const itRate = Number(it.discount_rate) || 0
+                const itDisc = it.discount_amount != null
+                  ? Number(it.discount_amount)
+                  : Math.round(itOrig * (itRate / 100) * 100) / 100
+                return sum + (itOrig - itDisc)
+              }, 0) || Number(order.total_amount)
+
+              const previewVal = Math.max(0, Number(orderDiscountValue) || 0)
+              let previewOrderDiscAmt = 0
+              if (orderDiscountType === 'percent') {
+                const cappedPercent = Math.min(100, previewVal)
+                previewOrderDiscAmt = Math.round(itemsSubtotal * (cappedPercent / 100) * 100) / 100
+              } else {
+                previewOrderDiscAmt = Math.min(itemsSubtotal, previewVal)
+              }
+              const previewFinalAfterOrderDisc = Math.max(0, Math.round((itemsSubtotal - previewOrderDiscAmt) * 100) / 100)
+
+              return (
+                <div className="mt-4 p-4 rounded-xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/60 via-white to-primary-50/40">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-forest text-white flex items-center justify-center shadow-xs flex-shrink-0">
+                        <Coins className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-bold text-gray-800 text-sm">ส่วนลดทั้งออเดอร์ (Whole Order Discount)</h4>
+                          {hasOrderDiscount && (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              {currentOrderDiscType === 'percent' ? `ลด ${currentOrderDiscVal}%` : `ลด ฿${currentOrderDiscVal.toLocaleString()}`} (-฿{currentOrderDiscAmt.toLocaleString()})
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {hasOrderDiscount
+                            ? (order.order_discount_note ? `หมายเหตุ: ${order.order_discount_note}` : 'ส่วนลดพิเศษที่หักจากยอดรวมทั้งออเดอร์')
+                            : 'กำหนดส่วนลดราคาทั้งออเดอร์เพิ่มเติม (รองรับทั้งแบบบาท และ %)'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {isDiscountEditable ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isEditingOrderDiscount) {
+                            setOrderDiscountType(order.order_discount_type || 'amount')
+                            setOrderDiscountValue(order.order_discount_value != null && Number(order.order_discount_value) > 0 ? Number(order.order_discount_value) : '')
+                            setOrderDiscountNote(order.order_discount_note || '')
+                          }
+                          setIsEditingOrderDiscount(!isEditingOrderDiscount)
+                        }}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all self-start sm:self-auto
+                          ${isEditingOrderDiscount
+                            ? 'bg-gray-200 text-gray-700'
+                            : 'bg-forest text-white hover:bg-forest-dark shadow-sm'}`}
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        {isEditingOrderDiscount ? 'ปิดหน้าต่าง' : hasOrderDiscount ? 'แก้ไขส่วนลดทั้งออเดอร์' : '+ ใส่ส่วนลดทั้งออเดอร์'}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-400 flex items-center gap-1 bg-gray-100 px-2.5 py-1 rounded-lg self-start sm:self-auto">
+                        <Lock className="w-3.5 h-3.5 text-gray-400" /> ยืนยันแล้ว (ล็อกส่วนลด)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Editor Box */}
+                  {isEditingOrderDiscount && isDiscountEditable && (
+                    <div className="mt-4 pt-3.5 border-t border-emerald-200/80 bg-white p-3.5 rounded-xl border shadow-xs space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                          <Percent className="w-3.5 h-3.5 text-forest" />
+                          กำหนดส่วนลดราคาทั้งออเดอร์
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          ยอดสินค้าหลังลดรายการ: <strong>฿{itemsSubtotal.toLocaleString()}</strong>
+                        </span>
+                      </div>
+
+                      {/* Toggle Type: บาท vs เปอร์เซ็นต์ */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 font-medium">ประเภทส่วนลด:</span>
+                        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
+                          <button
+                            type="button"
+                            onClick={() => setOrderDiscountType('amount')}
+                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                              orderDiscountType === 'amount'
+                                ? 'bg-forest text-white shadow-2xs'
+                                : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            ฿ จำนวนเงิน (บาท)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setOrderDiscountType('percent')}
+                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                              orderDiscountType === 'percent'
+                                ? 'bg-forest text-white shadow-2xs'
+                                : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            % เปอร์เซ็นต์
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quick Shortcuts */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] text-gray-400 mr-1">ทางลัด:</span>
+                        {orderDiscountType === 'percent' ? (
+                          [0, 5, 10, 15, 20, 25, 30].map(p => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => setOrderDiscountValue(p === 0 ? '' : p)}
+                              className={`text-[11px] px-2.5 py-0.5 rounded-md font-semibold transition-colors ${
+                                previewVal === p
+                                  ? 'bg-forest text-white'
+                                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              {p === 0 ? '0% (ล้างส่วนลด)' : `${p}%`}
+                            </button>
+                          ))
+                        ) : (
+                          [0, 50, 100, 200, 300, 500].map(amt => (
+                            <button
+                              key={amt}
+                              type="button"
+                              onClick={() => setOrderDiscountValue(amt === 0 ? '' : amt)}
+                              className={`text-[11px] px-2.5 py-0.5 rounded-md font-semibold transition-colors ${
+                                previewVal === amt
+                                  ? 'bg-forest text-white'
+                                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              {amt === 0 ? '0 ฿ (ล้างส่วนลด)' : `฿${amt}`}
+                            </button>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Inputs Row */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div>
+                          <label className="text-[11px] font-semibold text-gray-600 mb-1 block">
+                            {orderDiscountType === 'percent' ? 'เปอร์เซ็นต์ส่วนลด (%)' : 'จำนวนเงินส่วนลด (บาท)'}
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="0"
+                              max={orderDiscountType === 'percent' ? 100 : itemsSubtotal}
+                              step={orderDiscountType === 'percent' ? 1 : 10}
+                              value={orderDiscountValue}
+                              onChange={e => setOrderDiscountValue(e.target.value)}
+                              className="input text-sm py-1.5 px-3 pr-8 w-full font-bold"
+                              placeholder="0"
+                            />
+                            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-bold">
+                              {orderDiscountType === 'percent' ? '%' : '฿'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="text-[11px] font-semibold text-gray-600 mb-1 block">
+                            หมายเหตุส่วนลดทั้งออเดอร์ (เช่น ลูกค้า VIP, อุดหนุนยกแปลง)
+                          </label>
+                          <input
+                            type="text"
+                            value={orderDiscountNote}
+                            onChange={e => setOrderDiscountNote(e.target.value)}
+                            className="input text-sm py-1.5 px-3 w-full"
+                            placeholder="ระบุเหตุผลในการให้ส่วนลดทั้งออเดอร์ (ไม่บังคับ)"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Live Preview Box */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 bg-emerald-50/70 p-3 rounded-lg border border-emerald-100">
+                        <div className="text-xs text-emerald-950 space-y-0.5">
+                          <div>
+                            <span>ยอดสินค้าหลังลดรายการ: <strong>฿{itemsSubtotal.toLocaleString()}</strong></span>
+                            <span className="mx-2">−</span>
+                            <span>ส่วนลดทั้งออเดอร์: <strong className="text-rose-600">
+                              {orderDiscountType === 'percent' && previewVal > 0 ? `${previewVal}% ` : ''}(-฿{previewOrderDiscAmt.toLocaleString()})
+                            </strong></span>
+                          </div>
+                          <div>
+                            <span>ยอดชำระสุทธิใหม่: <strong className="text-forest text-sm font-bold">฿{previewFinalAfterOrderDisc.toLocaleString()}</strong></span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingOrderDiscount(false)}
+                            className="px-3 py-1.5 text-xs rounded-lg text-gray-500 hover:bg-gray-100"
+                          >
+                            ยกเลิก
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveOrderDiscount}
+                            disabled={savingOrderDiscount}
+                            className="btn-primary text-xs py-1.5 px-4 shadow-sm"
+                          >
+                            {savingOrderDiscount ? (
+                              <><div className="spinner w-3 h-3" /> กำลังบันทึก...</>
+                            ) : (
+                              '✓ บันทึกส่วนลดทั้งออเดอร์'
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Summary calculation */}
             {(() => {
               const origTotal = order.order_items?.reduce((sum, it) => sum + (Number(it.quantity) * Number(it.price_at_order)), 0) || Number(order.total_amount)
-              const totalDiscount = order.order_items?.reduce((sum, it) => {
+              
+              const totalItemDiscount = order.order_items?.reduce((sum, it) => {
                 const itemRate = Number(it.discount_rate) || 0
                 const itOrig = Number(it.quantity) * Number(it.price_at_order)
                 const itDisc = it.discount_amount != null
@@ -602,7 +1016,16 @@ export default function FarmerOrderDetail() {
                   : Math.round(itOrig * (itemRate / 100) * 100) / 100
                 return sum + itDisc
               }, 0) || 0
-              const calcFinal = Math.max(0, origTotal - totalDiscount)
+
+              const itemsSubtotal = Math.max(0, origTotal - totalItemDiscount)
+
+              const orderDiscountAmount = Number(order.order_discount_amount) || 0
+              const orderDiscountType = order.order_discount_type
+              const orderDiscountVal = Number(order.order_discount_value) || 0
+
+              const totalAllDiscounts = totalItemDiscount + orderDiscountAmount
+              const calcFinal = Math.max(0, itemsSubtotal - orderDiscountAmount)
+
               const displayedFinal = (order.status !== 'pending' && order.final_amount != null)
                 ? Number(order.final_amount)
                 : calcFinal
@@ -610,14 +1033,42 @@ export default function FarmerOrderDetail() {
               return (
                 <div className="border-t border-gray-100 mt-5 pt-4 space-y-2">
                   <div className="flex justify-between items-center text-sm text-gray-600">
-                    <span>ยอดรวมราคาเต็ม</span>
+                    <span>ยอดรวมราคาเต็ม (ก่อนหักส่วนลด)</span>
                     <span>฿{origTotal.toLocaleString()}</span>
                   </div>
 
-                  {totalDiscount > 0 && (
+                  {totalItemDiscount > 0 && (
                     <div className="flex justify-between items-center text-sm text-emerald-700 font-medium">
-                      <span>รวมส่วนลดทั้งหมด</span>
-                      <span>-฿{totalDiscount.toLocaleString()}</span>
+                      <span>ส่วนลดต่อรายการสินค้ารวม</span>
+                      <span>-฿{totalItemDiscount.toLocaleString()}</span>
+                    </div>
+                  )}
+
+                  {totalItemDiscount > 0 && orderDiscountAmount > 0 && (
+                    <div className="flex justify-between items-center text-xs text-gray-500">
+                      <span>ยอดรวมสินค้าหลังหักส่วนลดรายการ</span>
+                      <span>฿{itemsSubtotal.toLocaleString()}</span>
+                    </div>
+                  )}
+
+                  {orderDiscountAmount > 0 && (
+                    <div className="flex justify-between items-center text-sm text-emerald-700 font-medium">
+                      <span className="flex items-center gap-1.5">
+                        <Coins className="w-3.5 h-3.5" />
+                        ส่วนลดทั้งออเดอร์
+                        {orderDiscountType === 'percent' && ` (${orderDiscountVal}%)`}
+                        {order.order_discount_note && (
+                          <span className="text-xs text-gray-400 font-normal">[{order.order_discount_note}]</span>
+                        )}
+                      </span>
+                      <span>-฿{orderDiscountAmount.toLocaleString()}</span>
+                    </div>
+                  )}
+
+                  {totalAllDiscounts > 0 && (
+                    <div className="flex justify-between items-center text-xs text-emerald-800 font-semibold pt-1 border-t border-dashed border-gray-200">
+                      <span>รวมส่วนลดทั้งหมดที่ได้รับ</span>
+                      <span>-฿{totalAllDiscounts.toLocaleString()}</span>
                     </div>
                   )}
 
@@ -627,13 +1078,13 @@ export default function FarmerOrderDetail() {
                       {order.status === 'pending' && (
                         <p className="text-[11px] text-amber-600 flex items-center gap-1 mt-0.5">
                           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                          สถานะ "รอดำเนินการ": ลูกค้าจะยังเห็นราคาเต็ม ฿{origTotal.toLocaleString()} จนกว่าท่านจะกดยืนยันออเดอร์
+                          สถานะ "รอดำเนินการ": ลูกค้าจะยังเห็นราคาปกติ ฿{origTotal.toLocaleString()} จนกว่าท่านจะกดยืนยันออเดอร์ (เมื่อยืนยันแล้วระบบจะล็อกส่วนลด)
                         </p>
                       )}
-                      {order.status !== 'pending' && totalDiscount > 0 && (
+                      {order.status !== 'pending' && totalAllDiscounts > 0 && (
                         <p className="text-[11px] text-forest flex items-center gap-1 mt-0.5">
                           <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                          ยืนยันแล้ว: ลูกค้าเห็นราคาสุทธิหลังส่วนลดเรียบร้อยแล้ว
+                          ยืนยันแล้ว: ลูกค้าเห็นราคาสุทธิหลังส่วนลดเรียบร้อยแล้ว (ระบบล็อกส่วนลดแล้ว)
                         </p>
                       )}
                     </div>
@@ -645,6 +1096,8 @@ export default function FarmerOrderDetail() {
               )
             })()}
           </div>
+        )
+      })()}
 
           {/* Action & Upload Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -690,6 +1143,28 @@ export default function FarmerOrderDetail() {
                       <><CheckCircle2 className="w-4 h-4" /> เปลี่ยนเป็น "{labels[nextStatus]}"</>
                     )}
                   </button>
+
+                  {/* ปุ่มยกเลิกคำสั่งซื้อสำหรับเกษตรกร */}
+                  <div className="pt-3 border-t border-gray-100 mt-4">
+                    <button
+                      type="button"
+                      id="btn-farmer-cancel-order"
+                      onClick={() => {
+                        setCancelReason('')
+                        setShowCancelModal(true)
+                      }}
+                      className="w-full py-2 px-3 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      ยกเลิกคำสั่งซื้อ (ผลผลิตเสียหาย/มีเหตุจำเป็น)
+                    </button>
+                  </div>
+                </div>
+              ) : order.status === 'cancelled' ? (
+                <div className="text-center py-6 text-red-500">
+                  <XCircle className="w-10 h-10 mx-auto mb-2 text-red-500" />
+                  <p className="text-sm font-semibold text-red-700">ออเดอร์นี้ถูกยกเลิกแล้ว</p>
+                  <p className="text-xs text-red-400 mt-1">ไม่สามารถดำเนินการต่อได้</p>
                 </div>
               ) : (
                 <div className="text-center py-6 text-gray-400">
@@ -755,6 +1230,118 @@ export default function FarmerOrderDetail() {
           )}
         </div>
       </main>
+
+      {/* Farmer Cancel Order Modal */}
+      {showCancelModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !cancelling && setShowCancelModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 animate-slide-up"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5 text-red-600">
+                <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-800 text-base">ยกเลิกคำสั่งซื้อ (โดยฟาร์ม)</h3>
+                  <p className="text-xs text-gray-400">ออเดอร์ #{order.id.slice(0, 8).toUpperCase()}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={cancelling}
+                onClick={() => setShowCancelModal(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4 leading-relaxed">
+              ระบุเหตุผลในการยกเลิกออเดอร์ ระบบจะยกเลิกการจองพื้นที่ปลูกและส่งข้อความแจ้งเตือนพร้อมเหตุผลนี้ให้ลูกค้าทราบทันที
+            </p>
+
+            {/* Quick Reason Chips */}
+            <div className="mb-3">
+              <label className="block text-xs font-semibold text-gray-500 mb-2">
+                เลือกเหตุผลที่พบบ่อย:
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  'ผลผลิตเสียหายจากสภาพอากาศ 🌧️',
+                  'ปริมาณผลผลิตไม่เพียงพอต่อคำสั่งซื้อ 📉',
+                  'ตรวจพบโรคหรือแมลงศัตรูพืชในแปลง 🐛',
+                  'ระบบน้ำหรืออุปกรณ์ขัดข้อง ⚠️',
+                  'ลูกค้าขอยกเลิกผ่านช่องทางอื่น 📞',
+                ].map(reason => (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() => setCancelReason(reason)}
+                    className={`text-xs px-3 py-1.5 rounded-xl border transition-all text-left ${
+                      cancelReason === reason
+                        ? 'bg-red-50 border-red-300 text-red-700 font-semibold'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Reason Textarea */}
+            <div className="mb-6">
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                รายละเอียดเหตุผล (ส่งให้ลูกค้าอ่าน):
+              </label>
+              <textarea
+                rows={3}
+                value={cancelReason}
+                onChange={e => setCancelReason(e.target.value)}
+                placeholder="อธิบายเหตุผลในการยกเลิกคำสั่งซื้อ เช่น สภาพอากาศแปรปรวนทำให้ผักไม่โตตามเกณฑ์..."
+                className="input text-sm w-full"
+                disabled={cancelling}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={cancelling}
+                onClick={() => setShowCancelModal(false)}
+                className="btn-outline text-sm px-4 py-2"
+              >
+                ย้อนกลับ
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-farmer-cancel"
+                disabled={cancelling}
+                onClick={handleFarmerCancelOrder}
+                className="btn-sm bg-red-600 hover:bg-red-700 text-white rounded-xl px-5 py-2.5 font-semibold flex items-center gap-2 shadow-sm transition-all"
+              >
+                {cancelling ? (
+                  <>
+                    <div className="spinner w-4 h-4 border-white" />
+                    กำลังยกเลิก...
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-4 h-4" />
+                    ยืนยันยกเลิกออเดอร์
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

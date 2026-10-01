@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Calendar, ShoppingBag, AlertTriangle, CheckCircle2,
-  ArrowRight, Leaf, Package, Home, Boxes, TrendingDown
+  ArrowRight, Leaf, Package, Home, Boxes, TrendingDown,
+  Clock, Sparkles, AlertCircle, MapPin
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
@@ -18,6 +19,8 @@ export default function FarmerDashboard() {
   const [lowStock, setLowStock] = useState([])
   const [resources, setResources] = useState([])
   const [plantingCycles, setPlantingCycles] = useState([])
+  const [growingAreas, setGrowingAreas] = useState([])
+  const [allActiveCycles, setAllActiveCycles] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -26,7 +29,7 @@ export default function FarmerDashboard() {
 
   async function loadData() {
     try {
-      const [ordersRes, stockRes, resourcesRes, cyclesRes] = await Promise.allSettled([
+      const [ordersRes, stockRes, resourcesRes, cyclesRes, areasRes, activeCyclesRes] = await Promise.allSettled([
         getAllOrders(),
         getLowStockResources(),
         getResources(),
@@ -41,11 +44,24 @@ export default function FarmerDashboard() {
           .order('planting_start_date', { ascending: true })
           .limit(5)
           .then(({ data }) => data || []),
+        supabase
+          .from('growing_areas')
+          .select('*, vegetable_types(name)')
+          .eq('is_active', true)
+          .order('name')
+          .then(({ data }) => data || []),
+        supabase
+          .from('planting_cycles')
+          .select('id, growing_area_id, slots_used, status')
+          .in('status', ['scheduled', 'seeding', 'growing'])
+          .then(({ data }) => data || []),
       ])
       if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value || [])
       if (stockRes.status === 'fulfilled') setLowStock(stockRes.value || [])
       if (resourcesRes.status === 'fulfilled') setResources(resourcesRes.value || [])
       if (cyclesRes.status === 'fulfilled') setPlantingCycles(cyclesRes.value || [])
+      if (areasRes.status === 'fulfilled') setGrowingAreas(areasRes.value || [])
+      if (activeCyclesRes.status === 'fulfilled') setAllActiveCycles(activeCyclesRes.value || [])
     } catch (err) {
       console.error(err)
     } finally {
@@ -57,6 +73,22 @@ export default function FarmerDashboard() {
     ['confirmed', 'seeding', 'growing'].includes(o.status)
   )
   const readyOrders = orders.filter(o => o.status === 'ready')
+  const waitingCycleOrders = orders.filter(o => o.status === 'waiting_cycle')
+
+  // คำนวณความจุแปลงปลูกแต่ละโซนที่ใกล้เต็ม (>= 80% หรือ >= 90%)
+  const capacityAlerts = growingAreas.map(area => {
+    const areaCycles = allActiveCycles.filter(c => c.growing_area_id === area.id)
+    const calculatedSlots = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+    const used = Math.max(calculatedSlots, Number(area.current_slots_used) || 0)
+    const total = Number(area.total_slots) || 100
+    const rate = total > 0 ? Math.round((used / total) * 100) : 0
+    return {
+      ...area,
+      used_slots: used,
+      total_slots: total,
+      rate,
+    }
+  }).filter(a => a.rate >= 80).sort((a, b) => b.rate - a.rate)
 
   // สต็อกปกติ (ไม่ใกล้หมด)
   const okStock = resources.filter(r => r.current_qty > r.min_threshold)
@@ -84,6 +116,110 @@ export default function FarmerDashboard() {
             </Link>
           </div>
 
+          {/* New Orders Waiting Cycle Alert Banner */}
+          {waitingCycleOrders.length > 0 && (
+            <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-slide-up">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0 backdrop-blur-sm">
+                  <Sparkles className="w-6 h-6 text-white animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-base">มีออเดอร์ใหม่รอยืนยันรอบปลูก {waitingCycleOrders.length} รายการ!</p>
+                    <span className="px-2 py-0.5 rounded-full bg-white text-orange-600 text-xs font-bold animate-bounce">
+                      waiting_cycle
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/90 mt-0.5">
+                    มีคำสั่งซื้อใหม่ที่ยังไม่ได้สร้างรอบปลูก กรุณายืนยันรอบปลูกเพื่อให้ระบบเริ่มกระบวนการ
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/farmer/schedule"
+                className="btn bg-white text-orange-600 hover:bg-orange-50 font-bold px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2 whitespace-nowrap self-start sm:self-auto transition-all transform hover:scale-105"
+              >
+                <Calendar className="w-4 h-4" />
+                ไปจัดรอบปลูกทันที →
+              </Link>
+            </div>
+          )}
+
+          {/* Farm Capacity Near Full Alert (>= 80% / 90%) */}
+          {capacityAlerts.length > 0 && (
+            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 shadow-sm animate-slide-up">
+              <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-rose-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-rose-900">
+                      ⚠️ แจ้งเตือนความจุแปลงปลูกใกล้เต็ม ({capacityAlerts.length} แปลงเกิน 80%)
+                    </h3>
+                    <p className="text-xs text-rose-700 mt-0.5">
+                      พื้นที่แปลงปลูกด้านล่างนี้มีการจองพื้นที่สูง กรุณาเตรียมขยายรอบปลูกหรือเปิดแปลงปลูกใหม่
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  to="/farmer/schedule"
+                  className="btn-sm bg-rose-600 hover:bg-rose-700 text-white rounded-xl px-3.5 py-1.5 text-xs font-semibold shrink-0"
+                >
+                  ดูตารางปลูก
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                {capacityAlerts.map(area => {
+                  const isCritical = area.rate >= 90
+                  return (
+                    <div
+                      key={area.id}
+                      className={`p-3 rounded-xl border flex flex-col justify-between ${
+                        isCritical
+                          ? 'bg-red-100/60 border-red-300 text-red-900'
+                          : 'bg-amber-100/60 border-amber-300 text-amber-900'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-gray-500" />
+                          <span className="font-semibold text-xs truncate">
+                            {area.name} {area.zone_code ? `(${area.zone_code})` : ''}
+                          </span>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isCritical
+                              ? 'bg-red-600 text-white animate-pulse'
+                              : 'bg-amber-500 text-white'
+                          }`}
+                        >
+                          {isCritical ? 'วิกฤต 90%+' : 'ใกล้เต็ม 80%+'}
+                        </span>
+                      </div>
+
+                      <div className="w-full bg-black/10 rounded-full h-2 mb-1.5 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            isCritical ? 'bg-red-600' : 'bg-amber-500'
+                          }`}
+                          style={{ width: `${Math.min(100, area.rate)}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-gray-600">
+                        <span>จองแล้ว {area.used_slots} / {area.total_slots} ช่อง</span>
+                        <span className="font-bold text-xs">{area.rate}%</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Low Stock Alert */}
           {lowStock.length > 0 && (
             <div className="alert-warning mb-6 animate-fade-in">
@@ -101,7 +237,34 @@ export default function FarmerDashboard() {
           )}
 
           {/* Stat Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            {/* Stat Card พิเศษ: ออเดอร์ใหม่รอยืนยันรอบปลูก (สีส้มเด่นชัด) */}
+            <Link
+              to="/farmer/schedule"
+              className={`stat-card relative overflow-hidden transition-all duration-200 hover:shadow-md cursor-pointer ${
+                waitingCycleOrders.length > 0
+                  ? 'border-2 border-orange-400 bg-orange-50/60 hover:bg-orange-100/60'
+                  : 'hover:border-primary-300'
+              }`}
+            >
+              {waitingCycleOrders.length > 0 && (
+                <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500" />
+                </span>
+              )}
+              <div className="stat-icon bg-orange-100 text-orange-600">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-2xl font-bold text-orange-600">{waitingCycleOrders.length}</p>
+                <p className="text-xs font-semibold text-gray-700 truncate">รอยืนยันรอบปลูก</p>
+                <p className="text-[10px] text-orange-600 font-medium mt-0.5 flex items-center gap-0.5">
+                  จัดรอบปลูก →
+                </p>
+              </div>
+            </Link>
+
             {[
               { label: 'กำลังดำเนินการ', value: activeOrders.length, icon: Leaf, color: 'bg-blue-50 text-blue-600' },
               { label: 'พร้อมส่งมอบ', value: readyOrders.length, icon: CheckCircle2, color: 'bg-green-50 text-green-600' },

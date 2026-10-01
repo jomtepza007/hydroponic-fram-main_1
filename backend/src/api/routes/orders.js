@@ -230,7 +230,7 @@ router.put('/:id/status', authMiddleware, requireRole('admin', 'farmer'), async 
       updatePayload.notes = notes
     }
 
-    // เมื่อกดยืนยันออเดอร์ (confirmed) คำนวณ final_amount จาก order_items
+    // เมื่อกดยืนยันออเดอร์ (confirmed) คำนวณ final_amount จาก order_items และหักส่วนลดทั้งออเดอร์
     if (status === 'confirmed') {
       try {
         const { data: items } = await supabase
@@ -238,8 +238,14 @@ router.put('/:id/status', authMiddleware, requireRole('admin', 'farmer'), async 
           .select('quantity, price_at_order, discount_rate, discount_amount, final_price')
           .eq('order_id', req.params.id)
 
+        const { data: currentOrder } = await supabase
+          .from('orders')
+          .select('order_discount_type, order_discount_value, order_discount_amount')
+          .eq('id', req.params.id)
+          .single()
+
         if (items && items.length > 0) {
-          const finalSum = items.reduce((sum, item) => {
+          const itemSubtotal = items.reduce((sum, item) => {
             if (item.final_price != null && !isNaN(Number(item.final_price))) {
               return sum + Number(item.final_price)
             }
@@ -249,7 +255,18 @@ router.put('/:id/status', authMiddleware, requireRole('admin', 'farmer'), async 
               : Math.round(orig * ((Number(item.discount_rate) || 0) / 100) * 100) / 100
             return sum + (orig - disc)
           }, 0)
-          updatePayload.final_amount = Math.round(finalSum * 100) / 100
+
+          let orderDiscount = 0
+          if (currentOrder?.order_discount_type === 'percent') {
+            orderDiscount = Math.round(itemSubtotal * ((Number(currentOrder.order_discount_value) || 0) / 100) * 100) / 100
+          } else if (currentOrder?.order_discount_type === 'amount') {
+            orderDiscount = Math.min(itemSubtotal, Math.max(0, Number(currentOrder.order_discount_value) || 0))
+          } else {
+            orderDiscount = Number(currentOrder?.order_discount_amount) || 0
+          }
+
+          updatePayload.order_discount_amount = orderDiscount
+          updatePayload.final_amount = Math.max(0, Math.round((itemSubtotal - orderDiscount) * 100) / 100)
         }
       } catch (err) {
         console.warn('Backend could not precalculate final_amount:', err)

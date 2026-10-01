@@ -107,4 +107,34 @@ router.post('/:id/transactions', authMiddleware, requireRole('admin', 'farmer'),
   } catch (err) { res.status(400).json({ error: err.message }) }
 })
 
+// DELETE /api/resources/:id — Admin ลบทรัพยากร
+router.delete('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const resourceId = req.params.id
+
+    // 1. ปลดการผูก resource_id ใน vegetable_types
+    try {
+      await supabase.from('vegetable_types').update({ resource_id: null }).eq('resource_id', resourceId)
+    } catch (e) {
+      console.warn('Could not unbind vegetable_types:', e)
+    }
+
+    // 2. ลบประวัติ transactions
+    try {
+      await supabase.from('resource_transactions').delete().eq('resource_id', resourceId)
+    } catch (e) {
+      console.warn('Could not delete transactions:', e)
+    }
+
+    // 3. ลบทรัพยากร
+    const { data, error } = await supabase.from('resources').delete().eq('id', resourceId).select()
+    if (error) throw error
+
+    res.json({ success: true, message: 'ลบทรัพยากรสำเร็จ', data })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
 export default router
+

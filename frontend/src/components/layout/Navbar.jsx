@@ -5,6 +5,8 @@ import { useAuth } from '../../context/AuthContext'
 import { useCart } from '../../context/CartContext'
 import { signOut } from '../../api/auth'
 
+import NotificationDropdown from './NotificationDropdown'
+
 export default function Navbar() {
   const { isLoggedIn, profile, user, isAdmin, isFarmer } = useAuth()
   const { totalItems } = useCart()
@@ -92,11 +94,8 @@ export default function Navbar() {
                   </Link>
                 )}
 
-                {/* Notification Bell */}
-                <button className="relative p-2 rounded-lg text-gray-500 hover:text-forest hover:bg-primary-50 transition-all">
-                  <Bell className="w-5 h-5" />
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
-                </button>
+                {/* Notification Dropdown */}
+                <NotificationDropdown />
 
                 {/* Profile Dropdown */}
                 <div className="relative group">

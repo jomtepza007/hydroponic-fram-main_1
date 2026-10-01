@@ -11,6 +11,7 @@ import {
   getCustomerPhone,
   getCustomerEmail,
 } from '../../utils/dateUtils'
+import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
 
 // ไม่รวม completed/cancelled — ดูได้ที่หน้าประวัติการสั่งซื้อ
 const STATUS_FILTERS = [
@@ -211,6 +212,7 @@ export default function FarmerOrders() {
                     }
 
                     const customerPhone = getCustomerPhone(order)
+                    const typeCfg = getCustomerTypeConfig(order.profiles?.customer_type)
 
                     return (
                       <tr key={order.id} className="hover:bg-primary-50/40 transition-colors">
@@ -229,17 +231,23 @@ export default function FarmerOrders() {
                               <img
                                 src={order.profiles.avatar_url}
                                 alt={customerName}
-                                className="w-8 h-8 rounded-full object-cover border border-gray-200"
+                                className={`w-8 h-8 rounded-full object-cover border border-gray-200 ${typeCfg.avatarRing}`}
                               />
                             ) : (
-                              <div className="w-8 h-8 rounded-full bg-mint-100 text-forest font-bold flex items-center justify-center text-xs">
+                              <div className={`w-8 h-8 rounded-full ${typeCfg.avatarRing} font-bold flex items-center justify-center text-xs shadow-2xs`}>
                                 {customerName.slice(0, 1).toUpperCase()}
                               </div>
                             )}
                             <div className="min-w-0">
-                              <p className="font-semibold text-gray-800 text-sm truncate max-w-[170px]" title={customerName}>
-                                {customerName}
-                              </p>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="font-semibold text-gray-800 text-sm truncate max-w-[140px]" title={customerName}>
+                                  {customerName}
+                                </p>
+                                <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass}`}>
+                                  <span>{typeCfg.emoji}</span>
+                                  <span>{typeCfg.label}</span>
+                                </span>
+                              </div>
                               {customerEmail && (
                                 <p className="text-xs text-emerald-700 font-medium flex items-center gap-1 truncate max-w-[170px]" title={customerEmail}>
                                   <Mail className="w-3 h-3 text-emerald-600 flex-shrink-0" />

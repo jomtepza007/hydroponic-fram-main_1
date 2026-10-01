@@ -122,8 +122,8 @@ CREATE TABLE IF NOT EXISTS growing_areas (
 CREATE TABLE IF NOT EXISTS orders (
   id           uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   customer_id  uuid NOT NULL REFERENCES profiles(id),
-  status       text NOT NULL DEFAULT 'pending'
-               CHECK (status IN ('pending','confirmed','seeding','growing','ready','completed','cancelled')),
+  status       text NOT NULL DEFAULT 'waiting_cycle'
+               CHECK (status IN ('waiting_cycle','pending','confirmed','seeding','growing','ready','completed','cancelled')),
   pickup_date  date NOT NULL,
   total_amount decimal(10,2) NOT NULL DEFAULT 0,
   final_amount decimal(10,2),
@@ -320,9 +320,17 @@ CREATE POLICY "Anyone can view discount logs" ON discount_logs
 CREATE POLICY "Farmers and admins manage discount logs" ON discount_logs
   FOR ALL USING (get_my_role() IN ('farmer', 'admin'));
 
--- Notifications: ดูเฉพาะของตัวเอง
-CREATE POLICY "Users view own notifications" ON notifications
-  FOR ALL USING (auth.uid() = user_id);
+-- Notifications: ดูและแก้ไขเฉพาะของตัวเอง, สามารถส่งแจ้งเตือนได้ทุกคน
+CREATE POLICY "Users can view own notifications" ON notifications
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own notifications" ON notifications
+  FOR UPDATE USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Anyone can insert notifications" ON notifications
+  FOR INSERT WITH CHECK (true);
+
 
 -- Vegetable Types: ทุกคนอ่านได้, Farmer/Admin จัดการได้ทั้งหมด
 ALTER TABLE vegetable_types ENABLE ROW LEVEL SECURITY;
@@ -678,6 +686,7 @@ GRANT EXECUTE ON FUNCTION apply_item_discount(uuid, decimal, text, uuid) TO auth
 ALTER TABLE vegetable_types ADD COLUMN IF NOT EXISTS resource_id uuid REFERENCES resources(id) ON DELETE SET NULL;
 ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS vegetable_type_id uuid REFERENCES vegetable_types(id) ON DELETE SET NULL;
 ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS hydro_system text DEFAULT 'NFT';
+ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS current_slots_used integer DEFAULT 0;
 
 -- Migrations สำหรับระบบส่วนลดต่อรายการและประเภทลูกค้า
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS customer_type text DEFAULT 'ทั่วไป';
@@ -685,6 +694,9 @@ ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_rate decimal(5,2) DEFA
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS discount_amount decimal(10,2) DEFAULT 0;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS final_price decimal(10,2);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS final_amount decimal(10,2);
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
+ALTER TABLE orders ADD CONSTRAINT orders_status_check 
+  CHECK (status IN ('waiting_cycle','pending','confirmed','seeding','growing','ready','completed','cancelled'));
 
 -- ============================================
 -- SUPABASE STORAGE BUCKET

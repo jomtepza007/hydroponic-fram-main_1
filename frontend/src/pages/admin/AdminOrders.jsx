@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Camera, ChevronRight, History, Mail, Phone } from 'lucide-react'
+import { Camera, ChevronRight, Download, History, Mail, Phone } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
 import { getAllOrders, updateOrderStatus } from '../../api/orders'
+import { exportOrdersToExcel, exportOrdersToCSV } from '../../utils/csvExport'
 import {
   formatDateTh,
   getCustomerDisplayName,
@@ -11,6 +12,7 @@ import {
   getCustomerPhone,
   isEquipmentOrder,
 } from '../../utils/dateUtils'
+import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
 import toast from 'react-hot-toast'
 
 // ไม่รวม completed/cancelled ในรายการหลัก — ดูได้ที่หน้าประวัติ
@@ -40,12 +42,15 @@ export default function AdminOrders() {
   const filtered = statusFilter ? orders.filter(o => o.status === statusFilter) : orders
 
   async function handleStatus(id, status) {
+    const o = orders.find(item => item.id === id)
+    const isEq = isEquipmentOrder(o)
     try {
-      await updateOrderStatus(id, status)
+      await updateOrderStatus(id, status, '', isEq)
       toast.success('อัปเดตสำเร็จ')
       await load()
     } catch { toast.error('เกิดข้อผิดพลาด') }
   }
+
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -57,13 +62,26 @@ export default function AdminOrders() {
               <h1 className="page-title">จัดการออเดอร์ทั้งหมด</h1>
               <p className="page-subtitle">ออเดอร์ที่กำลังดำเนินการอยู่</p>
             </div>
-            <Link
-              to="/admin/order-history"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm"
-            >
-              <History className="w-4 h-4" />
-              ประวัติการสั่งซื้อ
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                id="btn-export-orders-excel"
+                onClick={() => exportOrdersToExcel(filtered)}
+                disabled={filtered.length === 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title="ส่งออกรายการออเดอร์เป็น Excel (.xlsx) จัดระเบียบความกว้างคอลัมน์ให้อ่านง่ายทันที"
+              >
+                <Download className="w-4 h-4 text-emerald-600" />
+                <span>ส่งออก Excel</span>
+              </button>
+              <Link
+                to="/admin/order-history"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm"
+              >
+                <History className="w-4 h-4" />
+                ประวัติการสั่งซื้อ
+              </Link>
+            </div>
           </div>
 
           <div className="flex gap-2 flex-wrap mb-6">
@@ -94,6 +112,7 @@ export default function AdminOrders() {
                     customerName = customerEmail.split('@')[0]
                   }
                   const customerPhone = getCustomerPhone(o)
+                  const typeCfg = getCustomerTypeConfig(o.profiles?.customer_type)
 
                   return (
                     <tr key={o.id}>
@@ -102,7 +121,13 @@ export default function AdminOrders() {
                         <p className="text-xs text-gray-400">{formatDateTh(o.created_at)}</p>
                       </td>
                       <td>
-                        <p className="text-sm font-semibold text-gray-800">{customerName}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-sm font-semibold text-gray-800">{customerName}</p>
+                          <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass}`}>
+                            <span>{typeCfg.emoji}</span>
+                            <span>{typeCfg.label}</span>
+                          </span>
+                        </div>
                         {customerEmail && (
                           <p className="text-xs text-emerald-700 flex items-center gap-1 font-medium mt-0.5">
                             <Mail className="w-3 h-3 text-emerald-600 flex-shrink-0" />
@@ -119,12 +144,22 @@ export default function AdminOrders() {
                       <td className="text-sm text-gray-600">
                         {o.order_items?.map(i => i.vegetable_types?.name).join(', ') || '-'}
                       </td>
+                      <td className="text-sm text-gray-700 whitespace-nowrap">
+                        <p className="font-medium text-gray-800">{formatDateTh(o.pickup_date)}</p>
+                        {isEquipmentOrder(o) && (
+                          <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium inline-block mt-0.5">
+                            จัดส่งพัสดุ
+                          </span>
+                        )}
+                      </td>
                       <td className="sm:text-left">
                         {o.final_amount != null && Number(o.final_amount) < Number(o.total_amount) ? (
                           <div>
                             <span className="text-xs text-gray-400 line-through block">฿{Number(o.total_amount).toLocaleString()}</span>
                             <span className="text-forest font-bold text-sm">฿{Number(o.final_amount).toLocaleString()}</span>
-                            <span className="text-[10px] text-emerald-600 font-semibold block">ลดแล้ว</span>
+                            <span className="text-[10px] text-emerald-600 font-semibold block">
+                              {Number(o.order_discount_amount) > 0 ? 'ลดพิเศษทั้งออเดอร์' : 'ลดแล้ว'}
+                            </span>
                           </div>
                         ) : (
                           <span className="font-semibold text-forest">฿{Number(o.total_amount).toLocaleString()}</span>

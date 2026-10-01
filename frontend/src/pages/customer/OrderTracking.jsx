@@ -1,22 +1,41 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   Clock, Package, ShoppingBag, ArrowLeft, CheckCircle,
-  Calendar, Leaf, ChevronRight, Truck, X, Maximize2, Camera
+  Calendar, Leaf, ChevronRight, Truck, X, Maximize2, Camera,
+  RotateCcw, XCircle, AlertTriangle, AlertCircle, Tag, Coins
 } from 'lucide-react'
 import Navbar from '../../components/layout/Navbar'
 import Footer from '../../components/layout/Footer'
 import StatusTimeline from '../../components/orders/StatusTimeline'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
-import { getOrderById } from '../../api/orders'
+import { getOrderById, updateOrderStatus } from '../../api/orders'
+import { supabase } from '../../api/supabaseClient'
 import { formatDateTh, isEquipmentOrder } from '../../utils/dateUtils'
 import { extractPhotosFromOrder, cleanOrderNotes } from '../../utils/orderPhotoUtils'
+import { useCart } from '../../context/CartContext'
+import toast from 'react-hot-toast'
+
+const CANCEL_REASONS = [
+  'เปลี่ยนใจ / ไม่สะดวกรับสินค้าแล้ว',
+  'สั่งซื้อผิดรายการ / ต้องการสั่งใหม่',
+  'ต้องการเปลี่ยนวันรับสินค้า',
+  'เปลี่ยนที่อยู่จัดส่ง',
+  'อื่นๆ (โปรดระบุรายละเอียด)',
+]
 
 export default function OrderTracking() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const { addToCart } = useCart()
   const [order, setOrder] = useState(null)
   const [loading, setLoading] = useState(true)
   const [selectedPhoto, setSelectedPhoto] = useState(null)
+
+  // สถานะการยกเลิกคำสั่งซื้อ
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelSubmitting, setCancelSubmitting] = useState(false)
 
   useEffect(() => {
     loadOrder()
@@ -54,6 +73,81 @@ export default function OrderTracking() {
   const isEquipment = isEquipmentOrder(order)
   const growthPhotos = extractPhotosFromOrder(order)
 
+  // ลูกค้าสามารถกดยกเลิกได้เฉพาะสถานะ waiting_cycle หรือ pending เท่านั้น
+  const canCancel = order?.status === 'waiting_cycle' || order?.status === 'pending'
+
+  // ฟังก์ชันสั่งซื้อซ้ำ
+  function handleReorder() {
+    if (!order?.order_items || order.order_items.length === 0) {
+      toast.error('ไม่พบรายการสินค้าในออเดอร์นี้')
+      return
+    }
+
+    let count = 0
+    order.order_items.forEach(item => {
+      const product = {
+        id: item.vegetable_type_id || item.vegetable_types?.id,
+        name: item.vegetable_types?.name || 'สินค้า',
+        category: item.vegetable_types?.category || 'vegetable',
+        price: Number(item.price_at_order) || 0,
+        unit: item.vegetable_types?.unit || item.unit || 'กก.',
+        image_url: item.vegetable_types?.image_url,
+      }
+      if (product.id) {
+        addToCart(product, Number(item.quantity) || 1)
+        count++
+      }
+    })
+
+    toast.success(`เพิ่มสินค้า ${count} รายการลงตะกร้าแล้ว 🛒`)
+    navigate('/cart')
+  }
+
+  // ฟังก์ชันยืนยันยกเลิกคำสั่งซื้อ
+  async function handleConfirmCancel() {
+    if (!order?.id || !canCancel) return
+    setCancelSubmitting(true)
+    const reasonText = cancelReason.trim() || 'ลูกค้าขอยกเลิกคำสั่งซื้อ'
+    const noteEntry = `[ลูกค้ายกเลิกคำสั่งซื้อ: ${reasonText} (${formatDateTh(new Date())})]`
+    const updatedNotes = order.notes ? `${order.notes}\n${noteEntry}` : noteEntry
+
+    try {
+      await updateOrderStatus(order.id, 'cancelled', updatedNotes, isEquipment)
+
+      // ส่งแจ้งเตือนให้เกษตรกรและแอดมิน
+      try {
+        const shortId = order.id.slice(0, 8).toUpperCase()
+        const { data: staffList } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('role', ['farmer', 'admin'])
+
+        if (staffList && staffList.length > 0) {
+          const inserts = staffList.map(s => ({
+            user_id: s.id,
+            title: `⚠️ ลูกค้ายกเลิกออเดอร์ #${shortId}`,
+            message: `เหตุผล: "${reasonText}"`,
+            type: 'order_status',
+            related_id: order.id,
+            is_read: false,
+          }))
+          await supabase.from('notifications').insert(inserts)
+        }
+      } catch (e) {
+        console.warn('Notify staff failed:', e)
+      }
+
+      toast.success('ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว')
+      setShowCancelModal(false)
+      setOrder(prev => ({ ...prev, status: 'cancelled', notes: updatedNotes }))
+    } catch (err) {
+      console.error(err)
+      toast.error('ไม่สามารถยกเลิกได้ กรุณาลองใหม่อีกครั้ง')
+    } finally {
+      setCancelSubmitting(false)
+    }
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
@@ -78,8 +172,71 @@ export default function OrderTracking() {
             </div>
             <p className="page-subtitle">สั่งเมื่อ {formatDateTh(order.created_at)}</p>
           </div>
-          <OrderStatusBadge status={order.status} isEquipment={isEquipment} />
+          <div className="flex items-center gap-3 flex-wrap">
+            <OrderStatusBadge status={order.status} isEquipment={isEquipment} />
+
+            {/* ปุ่มสั่งซื้อซ้ำ */}
+            <button
+              type="button"
+              id="btn-reorder-detail"
+              onClick={handleReorder}
+              className="btn-sm bg-primary-100 text-forest hover:bg-primary-200 flex items-center gap-1.5 transition-all shadow-sm"
+              title="สั่งซื้อรายการเดิมอีกครั้ง"
+            >
+              <RotateCcw className="w-4 h-4" />
+              สั่งซื้ออีกครั้ง
+            </button>
+
+            {/* ปุ่มยกเลิกคำสั่งซื้อสำหรับลูกค้า */}
+            {canCancel && (
+              <button
+                type="button"
+                id="btn-customer-cancel-order"
+                onClick={() => {
+                  setCancelReason('')
+                  setShowCancelModal(true)
+                }}
+                className="btn-sm border border-red-300 text-red-600 hover:bg-red-50 flex items-center gap-1.5 transition-all"
+                title="ขอยกเลิกคำสั่งซื้อ"
+              >
+                <XCircle className="w-4 h-4" />
+                ขอยกเลิกคำสั่งซื้อ
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Cancelled Notice Banner */}
+        {order.status === 'cancelled' && (
+          <div className="mb-6 p-4 rounded-2xl bg-red-50 border border-red-200 flex items-start gap-3 text-red-700 animate-slide-up">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-sm">คำสั่งซื้อนี้ถูกยกเลิกแล้ว</p>
+              <p className="text-xs text-red-600 mt-0.5">
+                รายการคำสั่งซื้อนี้ได้รับการยกเลิกแล้ว หากต้องการสั่งซื้อใหม่ สามารถกดปุ่ม "สั่งซื้ออีกครั้ง" ด้านบนได้ทันที
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Warning hint for cancelable orders */}
+        {canCancel && (
+          <div className="mb-6 p-3.5 rounded-xl bg-amber-50/80 border border-amber-200/70 flex items-center justify-between gap-3 text-amber-800 text-xs">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span>ออเดอร์นี้อยู่ในช่วงรอยืนยันรอบปลูก คุณสามารถกดยกเลิกคำสั่งซื้อได้หากต้องการเปลี่ยนใจ</span>
+            </div>
+            <button
+              onClick={() => {
+                setCancelReason('')
+                setShowCancelModal(true)
+              }}
+              className="text-amber-900 font-semibold underline hover:text-red-600 flex-shrink-0"
+            >
+              ยกเลิกคำสั่งซื้อ
+            </button>
+          </div>
+        )}
 
         {/* Status Timeline */}
         <div className="card mb-6 overflow-x-auto">
@@ -173,9 +330,10 @@ export default function OrderTracking() {
 
           {/* Pricing summary */}
           {(() => {
-            const isConfirmedOrLater = order.status !== 'pending'
+            const isConfirmedOrLater = !['waiting_cycle', 'pending', 'scheduling'].includes(order.status)
             const origTotal = Number(order.total_amount)
-            const totalDiscount = order.order_items?.reduce((sum, it) => {
+            
+            const totalItemDiscount = order.order_items?.reduce((sum, it) => {
               if (!isConfirmedOrLater || !(Number(it.discount_rate) > 0)) return sum
               const itTotal = Number(it.quantity) * Number(it.price_at_order)
               const itDisc = it.discount_amount != null
@@ -184,16 +342,22 @@ export default function OrderTracking() {
               return sum + itDisc
             }, 0) || 0
 
-            const hasAnyDiscount = isConfirmedOrLater && totalDiscount > 0
-            const finalAmount = order.final_amount != null
+            const orderDiscountAmount = isConfirmedOrLater ? (Number(order.order_discount_amount) || 0) : 0
+            const orderDiscountType = order.order_discount_type
+            const orderDiscountVal = Number(order.order_discount_value) || 0
+            const totalAllDiscounts = totalItemDiscount + orderDiscountAmount
+
+            const finalAmount = (isConfirmedOrLater && order.final_amount != null)
               ? Number(order.final_amount)
-              : Math.max(0, origTotal - totalDiscount)
+              : Math.max(0, origTotal - totalAllDiscounts)
+
+            const hasAnyDiscount = isConfirmedOrLater && totalAllDiscounts > 0
 
             return (
               <div className="border-t border-gray-100 mt-4 pt-4 space-y-2">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-gray-500">
-                    <Calendar className="w-4 h-4" />
+                    <Calendar className="w-4 h-4 text-forest" />
                     <span className="text-sm">
                       {isEquipment ? 'กำหนดส่งสินค้าประมาณ:' : 'วันรับสินค้า:'} <strong className="text-forest">{formatDateTh(order.pickup_date)}</strong>
                     </span>
@@ -205,20 +369,36 @@ export default function OrderTracking() {
                     </p>
                   ) : (
                     <div className="text-right space-y-1">
-                      <div className="text-xs text-gray-400">
-                        <span>ราคาปกติ ฿{origTotal.toLocaleString()}</span>
-                        <span className="text-emerald-700 font-semibold ml-2">ส่วนลดรวม -฿{totalDiscount.toLocaleString()}</span>
+                      <div className="text-xs text-gray-400 space-y-0.5">
+                        <div>ราคาปกติ ฿{origTotal.toLocaleString()}</div>
+                        {totalItemDiscount > 0 && (
+                          <div className="text-emerald-700 font-medium">
+                            ส่วนลดต่อรายการ -฿{totalItemDiscount.toLocaleString()}
+                          </div>
+                        )}
+                        {orderDiscountAmount > 0 && (
+                          <div className="text-emerald-700 font-medium flex items-center justify-end gap-1">
+                            <Coins className="w-3 h-3" />
+                            <span>ส่วนลดพิเศษทั้งออเดอร์ {orderDiscountType === 'percent' ? `(${orderDiscountVal}%)` : ''} -฿{orderDiscountAmount.toLocaleString()}</span>
+                            {order.order_discount_note && (
+                              <span className="text-gray-400 font-normal">({order.order_discount_note})</span>
+                            )}
+                          </div>
+                        )}
+                        <div className="text-emerald-800 font-bold">
+                          ประหยัดรวม -฿{totalAllDiscounts.toLocaleString()}
+                        </div>
                       </div>
-                      <p className="font-bold text-xl text-forest">
+                      <p className="font-bold text-xl text-forest pt-0.5">
                         ยอดชำระสุทธิ ฿{finalAmount.toLocaleString()}
                       </p>
                     </div>
                   )}
                 </div>
 
-                {order.status === 'pending' && (
-                  <p className="text-xs text-gray-400 italic">
-                    * ยอดเงินข้างต้นเป็นราคาปกติก่อนตรวจสอบคำสั่งซื้อ ยอดชำระสุทธิจะยืนยันเมื่อฟาร์มตรวจสอบออเดอร์
+                {!isConfirmedOrLater && (
+                  <p className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-lg border border-amber-200 mt-2">
+                    * ยอดเงินข้างต้นเป็นราคาปกติก่อนตรวจสอบคำสั่งซื้อ หากมีส่วนลดพิเศษ ฟาร์มจะยืนยันราคาสุทธิให้ท่านเมื่อตรวจสอบออเดอร์
                   </p>
                 )}
               </div>
@@ -320,6 +500,112 @@ export default function OrderTracking() {
                   </span>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Order Confirmation Modal */}
+      {showCancelModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !cancelSubmitting && setShowCancelModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 animate-slide-up"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5 text-red-600">
+                <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-800 text-base">ยืนยันยกเลิกคำสั่งซื้อ</h3>
+                  <p className="text-xs text-gray-400">ออเดอร์ #{order.id.slice(0, 8).toUpperCase()}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={cancelSubmitting}
+                onClick={() => setShowCancelModal(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4 leading-relaxed">
+              คุณต้องการยกเลิกคำสั่งซื้อนี้ใช่หรือไม่? เมื่อยกเลิกแล้วจะไม่สามารถย้อนกลับได้ แต่สามารถกดสั่งซื้อใหม่ได้ตลอดเวลา
+            </p>
+
+            {/* Quick Reason Chips */}
+            <div className="mb-3">
+              <label className="block text-xs font-semibold text-gray-500 mb-2">
+                เลือกเหตุผลในการยกเลิก:
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {CANCEL_REASONS.map(reason => (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() => setCancelReason(reason)}
+                    className={`text-xs px-3 py-1.5 rounded-xl border transition-all text-left ${
+                      cancelReason === reason
+                        ? 'bg-red-50 border-red-300 text-red-700 font-semibold'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Reason Textarea */}
+            <div className="mb-6">
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                รายละเอียดเพิ่มเติม (ไม่บังคับ):
+              </label>
+              <textarea
+                rows={2}
+                value={cancelReason}
+                onChange={e => setCancelReason(e.target.value)}
+                placeholder="ระบุเหตุผลในการขอยกเลิกคำสั่งซื้อ..."
+                className="input text-sm w-full"
+                disabled={cancelSubmitting}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={cancelSubmitting}
+                onClick={() => setShowCancelModal(false)}
+                className="btn-outline text-sm px-4 py-2"
+              >
+                ย้อนกลับ
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-cancel-order"
+                disabled={cancelSubmitting}
+                onClick={handleConfirmCancel}
+                className="btn-sm bg-red-600 hover:bg-red-700 text-white rounded-xl px-5 py-2.5 font-semibold flex items-center gap-2 shadow-sm transition-all"
+              >
+                {cancelSubmitting ? (
+                  <>
+                    <div className="spinner w-4 h-4 border-white" />
+                    กำลังยกเลิก...
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-4 h-4" />
+                    ยืนยันยกเลิกคำสั่งซื้อ
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

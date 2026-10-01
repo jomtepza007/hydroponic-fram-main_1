@@ -129,8 +129,8 @@ export default function Cart() {
     try {
       const customerEmail = user?.email || ''
       const customerName = user?.user_metadata?.full_name ||
-                           user?.user_metadata?.name ||
-                           (customerEmail ? customerEmail.split('@')[0] : '')
+        user?.user_metadata?.name ||
+        (customerEmail ? customerEmail.split('@')[0] : '')
 
       // อัปเดต profiles ถ้ามีชื่อ
       if (customerName && user?.id) {
@@ -431,9 +431,8 @@ export default function Cart() {
                       ) : capacity ? (
                         <div className="space-y-2 pt-1 border-t border-gray-100">
                           {/* Alert สถานะ */}
-                          <div className={`p-2 rounded-lg flex items-center gap-2 ${
-                            capacity.canAccept ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}>
+                          <div className={`p-2 rounded-lg flex items-center gap-2 ${capacity.canAccept ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}>
                             {capacity.canAccept ? (
                               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
                             ) : (
@@ -689,7 +688,7 @@ export default function Cart() {
                           onClick={() => navigate('/equipment/checkout')}
                           className="btn-primary w-full py-2.5 text-sm bg-blue-600 hover:bg-blue-700 border-none flex items-center justify-center gap-2"
                         >
-                          ไปหน้าชำระเงินอุปกรณ์ <ArrowRight className="w-4 h-4" />
+                          ดำเนินการต่อ <ArrowRight className="w-4 h-4" />
                         </button>
                       ) : (
                         <Link to="/login" className="btn-primary w-full text-center py-2.5 text-sm">

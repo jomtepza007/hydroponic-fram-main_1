@@ -1,4 +1,9 @@
 import { supabase } from './supabaseClient'
+import {
+  notifyOrderStatus,
+  notifyStaffNewOrder,
+  notifyCustomerNewOrder,
+} from './notifications'
 
 /** Customer: ดูออเดอร์ของตัวเอง */
 export async function getMyOrders(customerId) {
@@ -17,6 +22,10 @@ export async function getMyOrders(customerId) {
   return data
 }
 
+// Cache flags เพื่อป้องกันการส่ง query ที่ทำให้เกิด HTTP 400/404 ใน console ซ้ำๆ เมื่อ DB ยังไม่ได้ migrate
+let supportsCustomerType = null
+let supportsDiscountLogs = true
+
 /** ดูออเดอร์รายละเอียด + planting_cycles + รูปภาพ */
 export async function getOrderById(orderId) {
   const makeQuery = (profileFields) => `
@@ -33,15 +42,31 @@ export async function getOrderById(orderId) {
     )
   `
 
-  // 1. ลองดึงแบบมี customer_type และ email
+  // 1. ถ้าเคยตรวจสอบแล้วว่า DB ไม่มี customer_type ให้ดึงเฉพาะฟิลด์พื้นฐานเพื่อไม่ให้เกิด HTTP 400 Bad Request
+  if (supportsCustomerType === false) {
+    let res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone, email')).eq('id', orderId).single()
+    if (res.error && res.error.message && res.error.message.includes('email')) {
+      res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone')).eq('id', orderId).single()
+    }
+    if (res.error) throw res.error
+    return res.data
+  }
+
+  // 2. ลองดึงแบบมี customer_type และ email
   let res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone, email, customer_type')).eq('id', orderId).single()
 
-  // 2. ถ้า DB ยังไม่ได้รัน migration customer_type ให้ดึงแบบไม่มี customer_type
+  if (!res.error) {
+    supportsCustomerType = true
+    return res.data
+  }
+
+  // 3. ถ้า DB ยังไม่ได้รัน migration customer_type ให้ดึงแบบไม่มี customer_type และจำสถานะไว้
   if (res.error && res.error.message && (res.error.message.includes('customer_type') || res.error.code === '42703')) {
+    supportsCustomerType = false
     res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone, email')).eq('id', orderId).single()
   }
 
-  // 3. ถ้าไม่มีคอลัมน์ email ให้ดึงเฉพาะข้อมูลพื้นฐาน
+  // 4. ถ้าไม่มีคอลัมน์ email ให้ดึงเฉพาะข้อมูลพื้นฐาน
   if (res.error && res.error.message && res.error.message.includes('email')) {
     res = await supabase.from('orders').select(makeQuery('full_name, avatar_url, phone')).eq('id', orderId).single()
   }
@@ -54,7 +79,7 @@ export async function getOrderById(orderId) {
 export async function getAllOrders(filters = {}) {
   const queryWithEmail = `
     *,
-    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, email),
+    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, email, customer_type),
     order_items (
       id,
       quantity,
@@ -65,7 +90,7 @@ export async function getAllOrders(filters = {}) {
   `
   const queryWithoutEmail = `
     *,
-    profiles!orders_customer_id_fkey (full_name, avatar_url, phone),
+    profiles!orders_customer_id_fkey (full_name, avatar_url, phone, customer_type),
     order_items (
       id,
       quantity,
@@ -109,24 +134,44 @@ export async function createOrder(orderData, items) {
     .insert(orderItems)
   if (itemError) throw itemError
 
+  // ส่งการแจ้งเตือนเมื่อสร้างออเดอร์สำเร็จ
+  try {
+    if (order?.id && order?.customer_id) {
+      notifyCustomerNewOrder(order.id, order.customer_id)
+      const totalAmount = items.reduce(
+        (sum, it) => sum + (Number(it.quantity || 0) * Number(it.price_at_order || 0)),
+        0
+      )
+      notifyStaffNewOrder(order.id, totalAmount, '')
+    }
+  } catch (notifErr) {
+    console.warn('Could not send new order notification:', notifErr)
+  }
+
   return order
 }
 
 /** Farmer/Admin: อัปเดตสถานะออเดอร์ */
-export async function updateOrderStatus(orderId, status, notes = '') {
+export async function updateOrderStatus(orderId, status, notes = '', isEquipment = false) {
   const updatePayload = { status, updated_at: new Date().toISOString() }
   if (notes) updatePayload.notes = notes
 
   // เมื่อกดยืนยันออเดอร์ (confirmed) คำนวณและบันทึก final_amount ให้ลูกค้าเห็นราคาหลังหักส่วนลดทันที
   if (status === 'confirmed') {
     try {
-      const { data: items } = await supabase
+      const { data: items, error: itemsErr } = await supabase
         .from('order_items')
         .select('quantity, price_at_order, discount_rate, discount_amount, final_price')
         .eq('order_id', orderId)
 
-      if (items && items.length > 0) {
-        const finalSum = items.reduce((sum, item) => {
+      const { data: ordData } = await supabase
+        .from('orders')
+        .select('order_discount_type, order_discount_value, order_discount_amount')
+        .eq('id', orderId)
+        .single()
+
+      if (!itemsErr && items && items.length > 0) {
+        const itemSubtotal = items.reduce((sum, item) => {
           if (item.final_price != null && !isNaN(Number(item.final_price))) {
             return sum + Number(item.final_price)
           }
@@ -137,19 +182,43 @@ export async function updateOrderStatus(orderId, status, notes = '') {
           return sum + (orig - disc)
         }, 0)
 
-        updatePayload.final_amount = Math.round(finalSum * 100) / 100
+        let orderDiscount = 0
+        if (ordData?.order_discount_type === 'percent') {
+          orderDiscount = Math.round(itemSubtotal * ((Number(ordData.order_discount_value) || 0) / 100) * 100) / 100
+        } else if (ordData?.order_discount_type === 'amount') {
+          orderDiscount = Math.min(itemSubtotal, Math.max(0, Number(ordData.order_discount_value) || 0))
+        } else {
+          orderDiscount = Number(ordData?.order_discount_amount) || 0
+        }
+
+        updatePayload.order_discount_amount = orderDiscount
+        updatePayload.final_amount = Math.max(0, Math.round((itemSubtotal - orderDiscount) * 100) / 100)
       }
     } catch (finalErr) {
       console.warn('Could not pre-calculate final_amount on confirm:', finalErr)
     }
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('orders')
     .update(updatePayload)
     .eq('id', orderId)
     .select()
     .single()
+
+  // ถ้า update ล้มเหลวเพราะยังไม่มีคอลัมน์ final_amount ให้ตัดออกแล้วอัปเดตใหม่
+  if (error && (error.code === '42703' || error.message?.includes('final_amount'))) {
+    delete updatePayload.final_amount
+    const retry = await supabase
+      .from('orders')
+      .update(updatePayload)
+      .eq('id', orderId)
+      .select()
+      .single()
+    data = retry.data
+    error = retry.error
+  }
+
   if (error) throw error
 
   // ตัดสต็อกอุปกรณ์อัตโนมัติเมื่อยืนยันออเดอร์ หรือเมื่อเลื่อนสถานะเป็น confirmed, ready หรือ completed
@@ -158,6 +227,16 @@ export async function updateOrderStatus(orderId, status, notes = '') {
       await deductEquipmentStock(orderId)
     } catch (err) {
       console.warn('Failed to deduct equipment stock:', err)
+    }
+  }
+
+  // ส่งการแจ้งเตือนไปยังลูกค้าเมื่อสถานะออเดอร์เปลี่ยน
+  if (data?.customer_id) {
+    try {
+      const isEq = Boolean(isEquipment) || (data.notes && (data.notes.includes('จัดส่งถึงบ้าน') || data.notes.includes('📦 จัดส่ง')))
+      await notifyOrderStatus(orderId, data.customer_id, status, isEq)
+    } catch (notifErr) {
+      console.warn('Failed to send order status notification:', notifErr)
     }
   }
 
@@ -178,6 +257,7 @@ export async function applyOrderItemDiscount(orderId, orderItemId, discountRate,
     })
 
     if (!rpcError && rpcData && rpcData.success) {
+      supportsDiscountLogs = true
       return rpcData
     }
   } catch (rpcErr) {
@@ -185,13 +265,24 @@ export async function applyOrderItemDiscount(orderId, orderItemId, discountRate,
   }
 
   // 2. Client fallback กรณีไม่มี RPC
-  const { data: item, error: fetchErr } = await supabase
+  let item = null
+  const { data: itemWithDisc, error: fetchErr } = await supabase
     .from('order_items')
     .select('id, quantity, price_at_order, discount_rate')
     .eq('id', orderItemId)
     .single()
 
-  if (fetchErr) throw fetchErr
+  if (fetchErr) {
+    const { data: baseItem, error: baseErr } = await supabase
+      .from('order_items')
+      .select('id, quantity, price_at_order')
+      .eq('id', orderItemId)
+      .single()
+    if (baseErr) throw baseErr
+    item = baseItem
+  } else {
+    item = itemWithDisc
+  }
 
   const oldRate = Number(item.discount_rate) || 0
   const origTotal = Number(item.quantity) * Number(item.price_at_order)
@@ -210,26 +301,41 @@ export async function applyOrderItemDiscount(orderId, orderItemId, discountRate,
     .select()
     .single()
 
-  if (updateErr) throw updateErr
+  if (updateErr) {
+    if (updateErr.code === '42703' || updateErr.message?.includes('discount_rate')) {
+      throw new Error('ฐานข้อมูล Supabase ยังไม่มีคอลัมน์ส่วนลด กรุณารันไฟล์ migration_fix_discount_and_profiles.sql ใน Supabase SQL Editor ก่อนใช้งานฟังก์ชันนี้')
+    }
+    throw updateErr
+  }
 
-  // บันทึก log ลง discount_logs
-  try {
-    await supabase.from('discount_logs').insert([{
-      order_id: orderId,
-      order_item_id: orderItemId,
-      changed_by: changedBy || null,
-      old_rate: oldRate,
-      new_rate: rate,
-      discount_amount: discountAmount,
-      note: note || null,
-    }])
-  } catch (logErr) {
-    console.warn('Could not record discount_log fallback:', logErr)
+  // บันทึก log ลง discount_logs (ถ้ามีตาราง)
+  if (supportsDiscountLogs) {
+    try {
+      const { error: logErr } = await supabase.from('discount_logs').insert([{
+        order_id: orderId,
+        order_item_id: orderItemId,
+        changed_by: changedBy || null,
+        old_rate: oldRate,
+        new_rate: rate,
+        discount_amount: discountAmount,
+        note: note || null,
+      }])
+      if (logErr && (logErr.code === 'PGRST205' || logErr.code === '42P01')) {
+        supportsDiscountLogs = false
+      }
+    } catch (logErr) {
+      supportsDiscountLogs = false
+    }
   }
 
   // หาก order นั้น confirm แล้ว ให้ sync orders.final_amount
   try {
-    const { data: ord } = await supabase.from('orders').select('status').eq('id', orderId).single()
+    const { data: ord } = await supabase
+      .from('orders')
+      .select('status, order_discount_type, order_discount_value, order_discount_amount')
+      .eq('id', orderId)
+      .single()
+
     if (ord && ord.status !== 'pending' && ord.status !== 'cancelled') {
       const { data: allItems } = await supabase
         .from('order_items')
@@ -237,18 +343,33 @@ export async function applyOrderItemDiscount(orderId, orderItemId, discountRate,
         .eq('order_id', orderId)
 
       if (allItems) {
-        const orderFinal = allItems.reduce((acc, it) => {
+        const itemSubtotal = allItems.reduce((acc, it) => {
           return acc + (it.final_price != null ? Number(it.final_price) : Number(it.quantity) * Number(it.price_at_order))
         }, 0)
 
+        let orderDiscount = 0
+        if (ord.order_discount_type === 'percent') {
+          orderDiscount = Math.round(itemSubtotal * ((Number(ord.order_discount_value) || 0) / 100) * 100) / 100
+        } else if (ord.order_discount_type === 'amount') {
+          orderDiscount = Math.min(itemSubtotal, Math.max(0, Number(ord.order_discount_value) || 0))
+        } else {
+          orderDiscount = Number(ord.order_discount_amount) || 0
+        }
+
+        const finalAmount = Math.max(0, Math.round((itemSubtotal - orderDiscount) * 100) / 100)
+
         await supabase
           .from('orders')
-          .update({ final_amount: Math.round(orderFinal * 100) / 100, updated_at: new Date().toISOString() })
+          .update({
+            order_discount_amount: orderDiscount,
+            final_amount: finalAmount,
+            updated_at: new Date().toISOString()
+          })
           .eq('id', orderId)
       }
     }
   } catch (syncErr) {
-    console.warn('Could not sync orders.final_amount:', syncErr)
+    // ละเว้นหาก DB ยังไม่มีคอลัมน์ final_amount
   }
 
   return {
@@ -260,8 +381,131 @@ export async function applyOrderItemDiscount(orderId, orderItemId, discountRate,
   }
 }
 
+/** ปรับส่วนลดทั้งออเดอร์ (order-level discount: amount หรือ percent) พร้อมบันทึกประวัติ discount_logs */
+export async function applyOrderDiscount(orderId, { discountType, discountValue, note = '', changedBy = null }) {
+  const normType = ['percent', 'amount'].includes(discountType) ? discountType : null
+  const numValue = Math.max(0, Number(discountValue) || 0)
+
+  // 1. ลองเรียกผ่าน Stored Procedure apply_order_discount ก่อน (Atomic + Security Definer)
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('apply_order_discount', {
+      p_order_id: orderId,
+      p_discount_type: normType,
+      p_discount_value: numValue,
+      p_note: note || null,
+      p_changed_by: changedBy || null,
+    })
+
+    if (!rpcError && rpcData && rpcData.success) {
+      supportsDiscountLogs = true
+      return rpcData
+    }
+  } catch (rpcErr) {
+    console.warn('RPC apply_order_discount not available or errored, using client fallback:', rpcErr)
+  }
+
+  // 2. Client fallback กรณีไม่มี RPC หรือ RPC ไม่พร้อม
+  const { data: ord, error: ordErr } = await supabase
+    .from('orders')
+    .select('id, status, total_amount')
+    .eq('id', orderId)
+    .single()
+  if (ordErr) throw ordErr
+
+  if (!['waiting_cycle', 'pending', 'scheduling'].includes(ord.status)) {
+    throw new Error('ไม่สามารถแก้ไขส่วนลดได้เนื่องจากออเดอร์ได้รับการยืนยันแล้ว')
+  }
+
+  // ดึง order_items เพื่อคำนวณ Subtotal หลังหักส่วนลดต่อรายการ
+  const { data: items, error: itemsErr } = await supabase
+    .from('order_items')
+    .select('quantity, price_at_order, discount_rate, discount_amount, final_price')
+    .eq('order_id', orderId)
+  if (itemsErr) throw itemsErr
+
+  const subtotal = (items || []).reduce((sum, it) => {
+    if (it.final_price != null && !isNaN(Number(it.final_price))) {
+      return sum + Number(it.final_price)
+    }
+    const orig = Number(it.quantity) * Number(it.price_at_order)
+    const disc = it.discount_amount != null
+      ? Number(it.discount_amount)
+      : Math.round(orig * ((Number(it.discount_rate) || 0) / 100) * 100) / 100
+    return sum + (orig - disc)
+  }, 0)
+
+  let calculatedDiscount = 0
+  let storedValue = numValue
+
+  if (normType === 'percent') {
+    storedValue = Math.min(100, numValue)
+    calculatedDiscount = Math.round(subtotal * (storedValue / 100) * 100) / 100
+  } else if (normType === 'amount') {
+    calculatedDiscount = Math.min(subtotal, numValue)
+  } else {
+    storedValue = 0
+    calculatedDiscount = 0
+  }
+
+  const finalAmount = Math.max(0, Math.round((subtotal - calculatedDiscount) * 100) / 100)
+
+  // อัปเดต orders
+  const updatePayload = {
+    order_discount_type: normType,
+    order_discount_value: storedValue,
+    order_discount_amount: calculatedDiscount,
+    order_discount_note: note || null,
+    final_amount: finalAmount,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { data: updatedOrder, error: updateErr } = await supabase
+    .from('orders')
+    .update(updatePayload)
+    .eq('id', orderId)
+    .select()
+    .single()
+
+  if (updateErr) {
+    if (updateErr.code === '42703' || updateErr.message?.includes('order_discount')) {
+      throw new Error('ฐานข้อมูล Supabase ยังไม่มีคอลัมน์ส่วนลดระดับออเดอร์ กรุณารันไฟล์ migration_add_order_level_discount.sql ใน Supabase SQL Editor ก่อนใช้งานฟังก์ชันนี้')
+    }
+    throw updateErr
+  }
+
+  // บันทึก log ลง discount_logs (order_item_id = null)
+  if (supportsDiscountLogs) {
+    try {
+      await supabase.from('discount_logs').insert([{
+        order_id: orderId,
+        order_item_id: null,
+        changed_by: changedBy || null,
+        discount_type: normType ? `order_${normType}` : 'order_clear',
+        discount_value: storedValue,
+        discount_amount: calculatedDiscount,
+        note: note || null,
+      }])
+    } catch (logErr) {
+      console.warn('Could not insert whole-order discount log:', logErr)
+    }
+  }
+
+  return {
+    success: true,
+    order_discount_type: normType,
+    order_discount_value: storedValue,
+    order_discount_amount: calculatedDiscount,
+    final_amount: finalAmount,
+    order: updatedOrder,
+  }
+}
+
 /** ดึงประวัติการปรับส่วนลดของออเดอร์ (discount_logs) */
 export async function getOrderDiscountLogs(orderId) {
+  if (!supportsDiscountLogs) {
+    return []
+  }
+
   try {
     const { data, error } = await supabase
       .from('discount_logs')
@@ -273,15 +517,65 @@ export async function getOrderDiscountLogs(orderId) {
       .order('created_at', { ascending: false })
 
     if (error) {
+      // ถ้าตาราง discount_logs ยังไม่ได้สร้างใน Supabase ให้จดจำไว้และไม่แสดง warning รก console
+      if (error.code === 'PGRST205' || error.code === '42P01' || error.message?.includes('schema cache')) {
+        supportsDiscountLogs = false
+        return []
+      }
       console.warn('Could not load discount_logs:', error)
       return []
     }
+
+    supportsDiscountLogs = true
     return data || []
   } catch (err) {
-    console.warn('Error fetching discount_logs:', err)
+    supportsDiscountLogs = false
     return []
   }
 }
+
+/** Admin: ดึงประวัติการปรับส่วนลดทั้งหมดในระบบ (Discount Audit Logs) */
+export async function getAllDiscountLogs(limit = 100) {
+  if (!supportsDiscountLogs) return []
+  try {
+    const { data, error } = await supabase
+      .from('discount_logs')
+      .select(`
+        *,
+        profiles:changed_by (full_name, role, email),
+        orders:order_id (
+          id, pickup_date, status, total_amount, final_amount,
+          profiles:customer_id (full_name, customer_type)
+        ),
+        order_items:order_item_id (
+          id, quantity, price_at_order,
+          vegetable_types (name, unit)
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(limit)
+
+    if (error) {
+      if (error.code === 'PGRST205' || error.code === '42P01' || error.message?.includes('schema cache')) {
+        supportsDiscountLogs = false
+        return []
+      }
+      const fallback = await supabase
+        .from('discount_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit)
+      return fallback.data || []
+    }
+
+    supportsDiscountLogs = true
+    return data || []
+  } catch (err) {
+    console.warn('getAllDiscountLogs error:', err)
+    return []
+  }
+}
+
 
 /** ตัดสต็อก resource สำหรับ order_items ที่เป็น equipment และผูก resource_id ไว้ */
 export async function deductEquipmentStock(orderId) {

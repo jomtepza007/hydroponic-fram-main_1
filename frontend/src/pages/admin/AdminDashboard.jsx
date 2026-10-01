@@ -11,7 +11,7 @@ import { getResources } from '../../api/resources'
 import { getTopVegetables } from '../../api/reports'
 import { formatDateTh } from '../../utils/dateUtils'
 
-const COLORS = ['#2D6A4F', '#52B788', '#95D5B2', '#B7E4C7', '#40916C']
+const COLORS = ['#F59E0B', '#3B82F6', '#2D6A4F', '#52B788', '#95D5B2', '#10B981', '#059669', '#EF4444']
 
 export default function AdminDashboard() {
   const [orders, setOrders] = useState([])
@@ -42,21 +42,26 @@ export default function AdminDashboard() {
 
   const stats = {
     total: orders.length,
+    waitingCycle: orders.filter(o => o.status === 'waiting_cycle').length,
     pending: orders.filter(o => o.status === 'pending').length,
-    active: orders.filter(o => ['seeding', 'growing', 'confirmed'].includes(o.status)).length,
+    active: orders.filter(o => ['waiting_cycle', 'pending', 'seeding', 'growing', 'confirmed'].includes(o.status)).length,
     ready: orders.filter(o => o.status === 'ready').length,
-    revenue: orders.filter(o => o.status === 'completed').reduce((s, o) => s + Number(o.total_amount), 0),
+    revenue: orders
+      .filter(o => o.status === 'completed')
+      .reduce((s, o) => s + (o.final_amount != null ? Number(o.final_amount) : Number(o.total_amount) || 0), 0),
   }
 
   const lowStock = resources.filter(r => r.current_qty <= r.min_threshold)
 
   // Status distribution for pie chart
   const statusData = [
+    { name: 'รอสร้างรอบปลูก', value: orders.filter(o => o.status === 'waiting_cycle').length },
     { name: 'รอดำเนินการ', value: orders.filter(o => o.status === 'pending').length },
     { name: 'ยืนยันแล้ว', value: orders.filter(o => o.status === 'confirmed').length },
     { name: 'เพาะเมล็ด', value: orders.filter(o => o.status === 'seeding').length },
     { name: 'ลงรางปลูก', value: orders.filter(o => o.status === 'growing').length },
     { name: 'พร้อมส่งมอบ', value: orders.filter(o => o.status === 'ready').length },
+    { name: 'เสร็จสิ้น', value: orders.filter(o => o.status === 'completed').length },
   ].filter(d => d.value > 0)
 
   return (

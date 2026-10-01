@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { ShoppingBag, Plus, Package, ChevronRight } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ShoppingBag, Plus, Package, ChevronRight, RotateCcw } from 'lucide-react'
 import Navbar from '../../components/layout/Navbar'
 import Footer from '../../components/layout/Footer'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
 import { getMyOrders } from '../../api/orders'
 import { useAuth } from '../../context/AuthContext'
+import { useCart } from '../../context/CartContext'
 import { formatDateTh, isEquipmentOrder } from '../../utils/dateUtils'
+import toast from 'react-hot-toast'
 
 export default function OrderHistory() {
   const { user } = useAuth()
+  const { addToCart } = useCart()
+  const navigate = useNavigate()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -26,6 +30,34 @@ export default function OrderHistory() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleReorder(e, order) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!order?.order_items || order.order_items.length === 0) {
+      toast.error('ไม่พบรายการสินค้าในออเดอร์นี้')
+      return
+    }
+
+    let count = 0
+    order.order_items.forEach(item => {
+      const product = {
+        id: item.vegetable_type_id || item.vegetable_types?.id,
+        name: item.vegetable_types?.name || 'สินค้า',
+        category: item.vegetable_types?.category || 'vegetable',
+        price: Number(item.price_at_order) || 0,
+        unit: item.vegetable_types?.unit || item.unit || 'กก.',
+        image_url: item.vegetable_types?.image_url,
+      }
+      if (product.id) {
+        addToCart(product, Number(item.quantity) || 1)
+        count++
+      }
+    })
+
+    toast.success(`เพิ่มสินค้า ${count} รายการลงในตะกร้าแล้ว 🛒`)
+    navigate('/cart')
   }
 
   return (
@@ -98,6 +130,15 @@ export default function OrderHistory() {
                   ) : (
                     <p className="font-bold text-forest">฿{Number(order.total_amount).toLocaleString()}</p>
                   )}
+                  <button
+                    type="button"
+                    onClick={(e) => handleReorder(e, order)}
+                    className="btn-sm bg-primary-100 text-forest hover:bg-primary-200 flex items-center gap-1.5 transition-all text-xs font-semibold px-3 py-1.5 rounded-xl shadow-xs"
+                    title="สั่งซื้อรายการเดิมอีกครั้ง"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    สั่งอีกครั้ง
+                  </button>
                   <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-forest transition-colors" />
                 </div>
               </Link>
