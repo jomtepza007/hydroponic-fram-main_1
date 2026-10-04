@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Search, Phone, Package, Leaf, Mail, History } from 'lucide-react'
+import { ChevronRight, Search, Phone, Package, Leaf, Mail, History, Camera } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
-import { getAllOrders } from '../../api/orders'
+import { getAllOrders, updateOrderStatus } from '../../api/orders'
 import {
   formatDateTh,
   isEquipmentOrder,
   getCustomerDisplayName,
   getCustomerPhone,
   getCustomerEmail,
+  EQUIPMENT_STATUS_LABELS,
 } from '../../utils/dateUtils'
 import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
+import toast from 'react-hot-toast'
 
 // ไม่รวม completed/cancelled — ดูได้ที่หน้าประวัติการสั่งซื้อ
 const STATUS_FILTERS = [
@@ -23,6 +25,17 @@ const STATUS_FILTERS = [
   { value: 'growing', label: 'ลงรางปลูก' },
   { value: 'ready', label: 'พร้อมส่งมอบ/รอจัดส่ง' },
 ]
+
+const LABELS = {
+  waiting_cycle: 'รอสร้างรอบปลูก',
+  pending: 'รอดำเนินการ',
+  confirmed: 'ยืนยัน',
+  seeding: 'เพาะเมล็ด',
+  growing: 'ลงราง',
+  ready: 'พร้อมส่ง',
+  completed: 'เสร็จสิ้น',
+  cancelled: 'ยกเลิก',
+}
 
 const CATEGORY_FILTERS = [
   { value: 'all', label: 'ทั้งหมด' },
@@ -86,6 +99,18 @@ export default function FarmerOrders() {
     }
   }
 
+  async function handleStatus(id, status) {
+    const o = orders.find(item => item.id === id)
+    const isEq = isEquipmentOrder(o)
+    try {
+      await updateOrderStatus(id, status, '', isEq)
+      toast.success('อัปเดตสถานะสำเร็จ')
+      await loadOrders()
+    } catch {
+      toast.error('เกิดข้อผิดพลาดในการอัปเดตสถานะ')
+    }
+  }
+
   // Counts for category badges
   const vegCount = orders.filter(o => !isEquipmentOrder(o)).length
   const equipCount = orders.filter(o => isEquipmentOrder(o)).length
@@ -94,8 +119,8 @@ export default function FarmerOrders() {
     <div className="flex min-h-screen bg-background">
       <Sidebar />
 
-      <main className="ml-64 flex-1 p-8">
-        <div className="max-w-6xl mx-auto">
+      <main className="ml-64 flex-1 p-5 lg:p-7">
+        <div className="w-full">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <div>
@@ -174,28 +199,29 @@ export default function FarmerOrders() {
 
           {/* Table */}
           <div className="table-wrapper">
-            <table className="table">
+            <table className="table w-full">
               <thead>
                 <tr>
-                  <th>ออเดอร์</th>
-                  <th>ลูกค้า</th>
-                  <th>หมวดหมู่</th>
-                  <th>รายการสินค้า</th>
-                  <th>วันรับ/จัดส่ง</th>
-                  <th>สถานะ</th>
-                  <th>จัดการ</th>
+                  <th className="whitespace-nowrap">ออเดอร์</th>
+                  <th className="whitespace-nowrap min-w-[140px]">ลูกค้า</th>
+                  <th className="whitespace-nowrap">หมวดหมู่</th>
+                  <th className="min-w-[110px]">รายการสินค้า</th>
+                  <th className="whitespace-nowrap">วันรับ/จัดส่ง</th>
+                  <th className="whitespace-nowrap">สถานะ</th>
+                  <th className="whitespace-nowrap">เปลี่ยนสถานะ</th>
+                  <th className="whitespace-nowrap">จัดการ</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10">
+                    <td colSpan={8} className="text-center py-10">
                       <div className="spinner w-8 h-8 mx-auto" />
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-12 text-gray-400">
+                    <td colSpan={8} className="text-center py-12 text-gray-400">
                       <Package className="w-12 h-12 mx-auto mb-2 text-gray-300" />
                       <p>ไม่พบออเดอร์ตามเงื่อนไขที่เลือก</p>
                     </td>
@@ -217,7 +243,7 @@ export default function FarmerOrders() {
                     return (
                       <tr key={order.id} className="hover:bg-primary-50/40 transition-colors">
                         {/* Order ID */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <p className="font-bold text-gray-800 text-sm">
                             #{order.id.slice(0, 8).toUpperCase()}
                           </p>
@@ -231,10 +257,10 @@ export default function FarmerOrders() {
                               <img
                                 src={order.profiles.avatar_url}
                                 alt={customerName}
-                                className={`w-8 h-8 rounded-full object-cover border border-gray-200 ${typeCfg.avatarRing}`}
+                                className={`w-8 h-8 rounded-full object-cover border border-gray-200 flex-shrink-0 ${typeCfg.avatarRing}`}
                               />
                             ) : (
-                              <div className={`w-8 h-8 rounded-full ${typeCfg.avatarRing} font-bold flex items-center justify-center text-xs shadow-2xs`}>
+                              <div className={`w-8 h-8 rounded-full ${typeCfg.avatarRing} font-bold flex items-center justify-center text-xs shadow-2xs flex-shrink-0`}>
                                 {customerName.slice(0, 1).toUpperCase()}
                               </div>
                             )}
@@ -243,7 +269,7 @@ export default function FarmerOrders() {
                                 <p className="font-semibold text-gray-800 text-sm truncate max-w-[140px]" title={customerName}>
                                   {customerName}
                                 </p>
-                                <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass}`}>
+                                <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass} whitespace-nowrap`}>
                                   <span>{typeCfg.emoji}</span>
                                   <span>{typeCfg.label}</span>
                                 </span>
@@ -255,7 +281,7 @@ export default function FarmerOrders() {
                                 </p>
                               )}
                               {customerPhone ? (
-                                <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+                                <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5 whitespace-nowrap">
                                   <Phone className="w-3 h-3 text-gray-400 flex-shrink-0" />
                                   <span>{customerPhone}</span>
                                 </p>
@@ -267,13 +293,13 @@ export default function FarmerOrders() {
                         </td>
 
                         {/* Category */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           {isEquip ? (
-                            <span className="badge bg-blue-50 text-blue-700 border border-blue-200 text-xs">
+                            <span className="badge bg-blue-50 text-blue-700 border border-blue-200 text-xs whitespace-nowrap">
                               🌱 อุปกรณ์
                             </span>
                           ) : (
-                            <span className="badge bg-green-50 text-green-700 border border-green-200 text-xs">
+                            <span className="badge bg-green-50 text-green-700 border border-green-200 text-xs whitespace-nowrap">
                               🥬 ผักไฮโดร
                             </span>
                           )}
@@ -284,7 +310,7 @@ export default function FarmerOrders() {
                           <p className="text-sm text-gray-700 max-w-[200px] truncate font-medium">
                             {order.order_items?.map(i => i.vegetable_types?.name).join(', ') || '-'}
                           </p>
-                          <div className="text-xs text-gray-400">
+                          <div className="text-xs text-gray-400 whitespace-nowrap">
                             {order.final_amount != null && Number(order.final_amount) < Number(order.total_amount) ? (
                               <span>
                                 <span className="line-through mr-1">฿{Number(order.total_amount).toLocaleString()}</span>
@@ -298,7 +324,7 @@ export default function FarmerOrders() {
                         </td>
 
                         {/* Pickup / Delivery Date */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <p className="text-sm font-semibold text-forest">
                             {formatDateTh(order.pickup_date)}
                           </p>
@@ -308,17 +334,45 @@ export default function FarmerOrders() {
                         </td>
 
                         {/* Status */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <OrderStatusBadge status={order.status} isEquipment={isEquip} />
                         </td>
 
+                        {/* Change Status */}
+                        <td className="whitespace-nowrap">
+                          {order.status === 'waiting_cycle' ? (
+                            <div className="flex items-center">
+                              <span className="text-xs px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-medium whitespace-nowrap inline-flex items-center gap-1 shadow-2xs">
+                                🌱 ยืนยันรอบปลูกก่อน
+                              </span>
+                            </div>
+                          ) : (
+                            <select
+                              onChange={e => handleStatus(order.id, e.target.value)}
+                              value={order.status}
+                              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white cursor-pointer whitespace-nowrap min-w-[120px] font-medium shadow-2xs hover:border-forest transition-colors"
+                            >
+                              {(isEquip
+                                ? ['pending', 'confirmed', 'ready', 'completed', 'cancelled']
+                                : ['pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed', 'cancelled']
+                              ).map(s => (
+                                <option key={s} value={s}>
+                                  {isEquip ? (EQUIPMENT_STATUS_LABELS[s] || LABELS[s] || s) : (LABELS[s] || s)}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </td>
+
                         {/* Action Link */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <Link
                             to={`/farmer/orders/${order.id}`}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm whitespace-nowrap"
                           >
-                            จัดการ <ChevronRight className="w-3.5 h-3.5" />
+                            <Camera className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span className="whitespace-nowrap">จัดการ & อัปโหลดรูป</span>
+                            <ChevronRight className="w-3 h-3 flex-shrink-0" />
                           </Link>
                         </td>
                       </tr>

@@ -12,20 +12,13 @@ export default function AuthCallback() {
   const redirected = useRef(false)
 
   useEffect(() => {
-    console.log('[AuthCallback] mounted, URL:', window.location.href)
-
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
-    console.log('[AuthCallback] code in URL:', code ? 'YES' : 'NO')
 
     // ฟัง SIGNED_IN event โดยตรง
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[AuthCallback] onAuthStateChange event:', event, 'session:', !!session)
-
       if (event === 'SIGNED_IN' && session && !redirected.current) {
         redirected.current = true
-
-        console.log('[AuthCallback] SIGNED_IN - loading profile for:', session.user.id)
 
         // โหลด role จาก profiles table
         try {
@@ -36,7 +29,6 @@ export default function AuthCallback() {
             .single()
 
           const role = profile?.role || 'customer'
-          console.log('[AuthCallback] role:', role)
 
           if (role === 'admin') navigate('/admin', { replace: true })
           else if (role === 'farmer') navigate('/farmer', { replace: true })
@@ -50,14 +42,12 @@ export default function AuthCallback() {
 
     // ถ้ามี code ใน URL → trigger exchange โดยตรง
     if (code) {
-      console.log('[AuthCallback] triggering exchangeCodeForSession...')
-      supabase.auth.exchangeCodeForSession(window.location.href).then(({ data, error }) => {
-        console.log('[AuthCallback] exchangeCodeForSession result:', { data: !!data?.session, error: error?.message })
+      supabase.auth.exchangeCodeForSession(window.location.href).catch(error => {
+        console.warn('[AuthCallback] exchangeCode error:', error)
       })
     } else {
       // ไม่มี code → เช็ค session ที่มีอยู่แล้ว
       supabase.auth.getSession().then(({ data: { session } }) => {
-        console.log('[AuthCallback] getSession result:', !!session)
         if (session && !redirected.current) {
           redirected.current = true
           navigate('/', { replace: true })
@@ -68,7 +58,6 @@ export default function AuthCallback() {
     // Fallback timeout
     const timeout = setTimeout(() => {
       if (!redirected.current) {
-        console.log('[AuthCallback] TIMEOUT - redirecting to login')
         navigate('/login', { replace: true })
       }
     }, 15000)

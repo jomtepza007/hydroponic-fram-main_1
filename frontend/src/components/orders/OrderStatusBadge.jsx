@@ -27,9 +27,9 @@ export default function OrderStatusBadge({ status, isEquipment = false }) {
   }
 
   return (
-    <span className={className}>
-      <span className={`w-1.5 h-1.5 rounded-full ${dots[status] || 'bg-gray-400'}`} />
-      {label}
+    <span className={`${className} whitespace-nowrap inline-flex items-center gap-1.5 flex-shrink-0`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dots[status] || 'bg-gray-400'}`} />
+      <span className="whitespace-nowrap">{label}</span>
     </span>
   )
 }

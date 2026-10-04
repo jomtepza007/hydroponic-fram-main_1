@@ -93,8 +93,8 @@ export default function FarmerOrderHistory() {
     <div className="flex min-h-screen bg-background">
       <Sidebar />
 
-      <main className="ml-64 flex-1 p-8">
-        <div className="max-w-6xl mx-auto">
+      <main className="ml-64 flex-1 p-5 lg:p-7">
+        <div className="w-full">
 
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
@@ -193,17 +193,17 @@ export default function FarmerOrderHistory() {
 
           {/* Table */}
           <div className="table-wrapper">
-            <table className="table">
+            <table className="table w-full">
               <thead>
                 <tr>
-                  <th>ออเดอร์</th>
-                  <th>ลูกค้า</th>
-                  <th>หมวดหมู่</th>
-                  <th>รายการสินค้า</th>
-                  <th>วันรับ/จัดส่ง</th>
-                  <th>ยอดรวม</th>
-                  <th>สถานะ</th>
-                  <th>รายละเอียด</th>
+                  <th className="whitespace-nowrap">ออเดอร์</th>
+                  <th className="whitespace-nowrap min-w-[140px]">ลูกค้า</th>
+                  <th className="whitespace-nowrap">หมวดหมู่</th>
+                  <th className="min-w-[110px]">รายการสินค้า</th>
+                  <th className="whitespace-nowrap">วันรับ/จัดส่ง</th>
+                  <th className="whitespace-nowrap">ยอดรวม</th>
+                  <th className="whitespace-nowrap">สถานะ</th>
+                  <th className="whitespace-nowrap">รายละเอียด</th>
                 </tr>
               </thead>
               <tbody>
@@ -233,7 +233,7 @@ export default function FarmerOrderHistory() {
                     return (
                       <tr key={order.id} className="hover:bg-primary-50/40 transition-colors">
                         {/* Order ID */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <p className="font-bold text-gray-800 text-sm">
                             #{order.id.slice(0, 8).toUpperCase()}
                           </p>
@@ -308,17 +308,18 @@ export default function FarmerOrderHistory() {
                         </td>
 
                         {/* Status */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <OrderStatusBadge status={order.status} isEquipment={isEquip} />
                         </td>
 
                         {/* Action */}
-                        <td>
+                        <td className="whitespace-nowrap">
                           <Link
                             to={`${detailBase}/${order.id}`}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm whitespace-nowrap"
                           >
-                            ดูรายละเอียด <ChevronRight className="w-3.5 h-3.5" />
+                            <span className="whitespace-nowrap">ดูรายละเอียด</span>
+                            <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
                           </Link>
                         </td>
                       </tr>

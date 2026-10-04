@@ -10,7 +10,7 @@ import Footer from '../../components/layout/Footer'
 import StatusTimeline from '../../components/orders/StatusTimeline'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
 import { getOrderById, updateOrderStatus } from '../../api/orders'
-import { supabase } from '../../api/supabaseClient'
+import { notifyStaffCancelOrder } from '../../api/notifications'
 import { formatDateTh, isEquipmentOrder } from '../../utils/dateUtils'
 import { extractPhotosFromOrder, cleanOrderNotes } from '../../utils/orderPhotoUtils'
 import { useCart } from '../../context/CartContext'
@@ -85,13 +85,21 @@ export default function OrderTracking() {
 
     let count = 0
     order.order_items.forEach(item => {
+      const rawPrice = item.price_at_order > 0
+        ? item.price_at_order
+        : (item.vegetable_types?.price_per_kg ?? item.vegetable_types?.price ?? item.price ?? 0)
+      const unitPrice = isNaN(Number(rawPrice)) ? 0 : Number(rawPrice)
+
       const product = {
         id: item.vegetable_type_id || item.vegetable_types?.id,
-        name: item.vegetable_types?.name || 'สินค้า',
-        category: item.vegetable_types?.category || 'vegetable',
-        price: Number(item.price_at_order) || 0,
+        name: item.vegetable_types?.name || item.name || 'สินค้า',
+        category: item.vegetable_types?.category || item.category || 'vegetable',
+        price: unitPrice,
+        price_per_kg: unitPrice,
         unit: item.vegetable_types?.unit || item.unit || 'กก.',
         image_url: item.vegetable_types?.image_url,
+        harvest_days: Number(item.vegetable_types?.harvest_days) || 30,
+        slots_per_kg: Number(item.vegetable_types?.slots_per_kg) || 4,
       }
       if (product.id) {
         addToCart(product, Number(item.quantity) || 1)
@@ -114,25 +122,9 @@ export default function OrderTracking() {
     try {
       await updateOrderStatus(order.id, 'cancelled', updatedNotes, isEquipment)
 
-      // ส่งแจ้งเตือนให้เกษตรกรและแอดมิน
+      // ส่งแจ้งเตือนให้เกษตรกรและแอดมิน (DB Trigger และ RPC จะทำงานอัตโนมัติ)
       try {
-        const shortId = order.id.slice(0, 8).toUpperCase()
-        const { data: staffList } = await supabase
-          .from('profiles')
-          .select('id')
-          .in('role', ['farmer', 'admin'])
-
-        if (staffList && staffList.length > 0) {
-          const inserts = staffList.map(s => ({
-            user_id: s.id,
-            title: `⚠️ ลูกค้ายกเลิกออเดอร์ #${shortId}`,
-            message: `เหตุผล: "${reasonText}"`,
-            type: 'order_status',
-            related_id: order.id,
-            is_read: false,
-          }))
-          await supabase.from('notifications').insert(inserts)
-        }
+        await notifyStaffCancelOrder(order.id, reasonText)
       } catch (e) {
         console.warn('Notify staff failed:', e)
       }
@@ -149,10 +141,10 @@ export default function OrderTracking() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background w-full overflow-x-hidden">
       <Navbar />
 
-      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-28">
+      <main className="flex-1 w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
         {/* Back */}
         <Link to="/orders" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-forest mb-6 transition-colors">
           <ArrowLeft className="w-4 h-4" />
@@ -276,49 +268,51 @@ export default function OrderTracking() {
                 : itemTotal - itemDiscountAmount
 
               return (
-                <div key={item.id} className="flex items-center gap-4 p-4 bg-primary-50 rounded-xl">
-                  <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
-                    {item.vegetable_types?.image_url
-                      ? <img src={item.vegetable_types.image_url} alt="" className="w-full h-full object-cover rounded-xl" />
-                      : <Leaf className="w-6 h-6 text-primary-300" />
-                    }
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-gray-800">{item.vegetable_types?.name}</p>
-                      {item.vegetable_types?.category === 'equipment' && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">อุปกรณ์</span>
-                      )}
-                      {hasDiscount && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
-                          ลด {item.discount_rate}% (-฿{itemDiscountAmount.toLocaleString()})
-                        </span>
-                      )}
+                <div key={item.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 bg-primary-50 rounded-xl">
+                  <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                    <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      {item.vegetable_types?.image_url
+                        ? <img src={item.vegetable_types.image_url} alt="" className="w-full h-full object-cover rounded-xl" />
+                        : <Leaf className="w-6 h-6 text-primary-300" />
+                      }
                     </div>
-                    <p className="text-sm text-gray-400">
-                      จำนวน {item.quantity} {item.vegetable_types?.unit || item.unit}
-                      {(item.slots_required > 0 || item.vegetable_types?.slots_per_kg) && item.vegetable_types?.category !== 'equipment' && (
-                        <span className="ml-2 font-medium text-forest">
-                          • ใช้พื้นที่ {item.slots_required || Math.ceil(item.quantity * (item.vegetable_types?.slots_per_kg || 4))} ช่อง
-                        </span>
-                      )}
-                      {item.vegetable_types?.harvest_days && item.vegetable_types?.category !== 'equipment' && (
-                        <span className="ml-2">• ปลูก {item.vegetable_types.harvest_days} วัน</span>
-                      )}
-                    </p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                        <p className="font-semibold text-gray-800 text-sm sm:text-base">{item.vegetable_types?.name}</p>
+                        {item.vegetable_types?.category === 'equipment' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">อุปกรณ์</span>
+                        )}
+                        {hasDiscount && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
+                            ลด {item.discount_rate}% (-฿{itemDiscountAmount.toLocaleString()})
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                        จำนวน {item.quantity} {item.vegetable_types?.unit || item.unit}
+                        {(item.slots_required > 0 || item.vegetable_types?.slots_per_kg) && item.vegetable_types?.category !== 'equipment' && (
+                          <span className="ml-2 font-medium text-forest">
+                            • ใช้พื้นที่ {item.slots_required || Math.ceil(item.quantity * (item.vegetable_types?.slots_per_kg || 4))} ช่อง
+                          </span>
+                        )}
+                        {item.vegetable_types?.harvest_days && item.vegetable_types?.category !== 'equipment' && (
+                          <span className="ml-2">• ปลูก {item.vegetable_types.harvest_days} วัน</span>
+                        )}
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-left sm:text-right border-t border-gray-100 sm:border-t-0 pt-2 sm:pt-0">
                     {hasDiscount ? (
                       <div>
                         <span className="line-through text-gray-400 text-xs block">
                           ฿{itemTotal.toLocaleString()}
                         </span>
-                        <span className="font-bold text-forest">
+                        <span className="font-bold text-forest text-sm sm:text-base">
                           ฿{itemFinalPrice.toLocaleString()}
                         </span>
                       </div>
                     ) : (
-                      <p className="font-bold text-forest">
+                      <p className="font-bold text-forest text-sm sm:text-base">
                         ฿{itemTotal.toLocaleString()}
                       </p>
                     )}

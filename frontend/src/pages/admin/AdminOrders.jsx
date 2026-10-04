@@ -11,6 +11,7 @@ import {
   getCustomerEmail,
   getCustomerPhone,
   isEquipmentOrder,
+  EQUIPMENT_STATUS_LABELS,
 } from '../../utils/dateUtils'
 import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
 import toast from 'react-hot-toast'
@@ -55,8 +56,8 @@ export default function AdminOrders() {
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
-      <main className="ml-64 flex-1 p-8">
-        <div className="max-w-6xl mx-auto">
+      <main className="ml-64 flex-1 p-5 lg:p-7">
+        <div className="w-full">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
             <div>
               <h1 className="page-title">จัดการออเดอร์ทั้งหมด</h1>
@@ -95,11 +96,17 @@ export default function AdminOrders() {
           </div>
 
           <div className="table-wrapper">
-            <table className="table">
+            <table className="table w-full">
               <thead>
                 <tr>
-                  <th>ออเดอร์</th><th>ลูกค้า</th><th>รายการ</th>
-                  <th>วันรับ</th><th>ยอด</th><th>สถานะ</th><th>เปลี่ยนสถานะ</th><th>จัดการ</th>
+                  <th className="whitespace-nowrap">ออเดอร์</th>
+                  <th className="whitespace-nowrap min-w-[140px]">ลูกค้า</th>
+                  <th className="min-w-[110px]">รายการ</th>
+                  <th className="whitespace-nowrap">วันรับ</th>
+                  <th className="whitespace-nowrap">ยอด</th>
+                  <th className="whitespace-nowrap">สถานะ</th>
+                  <th className="whitespace-nowrap">เปลี่ยนสถานะ</th>
+                  <th className="whitespace-nowrap">จัดการ</th>
                 </tr>
               </thead>
               <tbody>
@@ -116,14 +123,14 @@ export default function AdminOrders() {
 
                   return (
                     <tr key={o.id}>
-                      <td>
+                      <td className="whitespace-nowrap">
                         <p className="font-semibold text-sm">#{o.id.slice(0, 8).toUpperCase()}</p>
                         <p className="text-xs text-gray-400">{formatDateTh(o.created_at)}</p>
                       </td>
                       <td>
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <p className="text-sm font-semibold text-gray-800">{customerName}</p>
-                          <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass}`}>
+                          <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${typeCfg.badgeClass} whitespace-nowrap`}>
                             <span>{typeCfg.emoji}</span>
                             <span>{typeCfg.label}</span>
                           </span>
@@ -147,17 +154,17 @@ export default function AdminOrders() {
                       <td className="text-sm text-gray-700 whitespace-nowrap">
                         <p className="font-medium text-gray-800">{formatDateTh(o.pickup_date)}</p>
                         {isEquipmentOrder(o) && (
-                          <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium inline-block mt-0.5">
+                          <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium inline-block mt-0.5 whitespace-nowrap">
                             จัดส่งพัสดุ
                           </span>
                         )}
                       </td>
-                      <td className="sm:text-left">
+                      <td className="whitespace-nowrap sm:text-left">
                         {o.final_amount != null && Number(o.final_amount) < Number(o.total_amount) ? (
                           <div>
                             <span className="text-xs text-gray-400 line-through block">฿{Number(o.total_amount).toLocaleString()}</span>
                             <span className="text-forest font-bold text-sm">฿{Number(o.final_amount).toLocaleString()}</span>
-                            <span className="text-[10px] text-emerald-600 font-semibold block">
+                            <span className="text-[10px] text-emerald-600 font-semibold block whitespace-nowrap">
                               {Number(o.order_discount_amount) > 0 ? 'ลดพิเศษทั้งออเดอร์' : 'ลดแล้ว'}
                             </span>
                           </div>
@@ -165,12 +172,14 @@ export default function AdminOrders() {
                           <span className="font-semibold text-forest">฿{Number(o.total_amount).toLocaleString()}</span>
                         )}
                       </td>
-                      <td><OrderStatusBadge status={o.status} isEquipment={isEquipmentOrder(o)} /></td>
-                      <td>
+                      <td className="whitespace-nowrap">
+                        <OrderStatusBadge status={o.status} isEquipment={isEquipmentOrder(o)} />
+                      </td>
+                      <td className="whitespace-nowrap">
                         {o.status === 'waiting_cycle' ? (
                           // ล็อกไม่ให้เปลี่ยนสถานะ — ต้องไปยืนยันสร้างรอบปลูกก่อน
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs px-2 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-medium">
+                          <div className="flex items-center">
+                            <span className="text-xs px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-medium whitespace-nowrap inline-flex items-center gap-1 shadow-2xs">
                               🌱 ยืนยันรอบปลูกก่อน
                             </span>
                           </div>
@@ -178,22 +187,27 @@ export default function AdminOrders() {
                           <select
                             onChange={e => handleStatus(o.id, e.target.value)}
                             value={o.status}
-                            className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white cursor-pointer"
+                            className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white cursor-pointer whitespace-nowrap min-w-[120px] font-medium shadow-2xs hover:border-forest transition-colors"
                           >
-                            {['pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed', 'cancelled'].map(s => (
-                              <option key={s} value={s}>{LABELS[s]}</option>
+                            {(isEquipmentOrder(o)
+                              ? ['pending', 'confirmed', 'ready', 'completed', 'cancelled']
+                              : ['pending', 'confirmed', 'seeding', 'growing', 'ready', 'completed', 'cancelled']
+                            ).map(s => (
+                              <option key={s} value={s}>
+                                {isEquipmentOrder(o) ? (EQUIPMENT_STATUS_LABELS[s] || LABELS[s] || s) : (LABELS[s] || s)}
+                              </option>
                             ))}
                           </select>
                         )}
                       </td>
-                      <td>
+                      <td className="whitespace-nowrap">
                         <Link
                           to={`/farmer/orders/${o.id}`}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-semibold text-forest hover:bg-forest hover:text-white hover:border-forest transition-all shadow-sm whitespace-nowrap"
                         >
-                          <Camera className="w-3.5 h-3.5" />
-                          <span>จัดการ & อัปโหลดรูป</span>
-                          <ChevronRight className="w-3 h-3" />
+                          <Camera className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="whitespace-nowrap">จัดการ & อัปโหลดรูป</span>
+                          <ChevronRight className="w-3 h-3 flex-shrink-0" />
                         </Link>
                       </td>
                     </tr>

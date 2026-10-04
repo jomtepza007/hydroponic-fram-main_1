@@ -163,7 +163,7 @@ export default function Cart() {
           vegetable_type_id: item.id,
           quantity: Number(item.qty),
           unit: item.unit || 'กก.',
-          price_at_order: Number(item.price_per_kg),
+          price_at_order: Number(item.price_per_kg ?? item.price ?? 0),
           slots_required: slotsRequired,
         }
       })
@@ -290,7 +290,8 @@ export default function Cart() {
                   {/* Vegetable Items List */}
                   <div className="lg:col-span-7 space-y-3.5">
                     {vegItems.map(item => {
-                      const itemSubtotal = Number(item.qty) * Number(item.price_per_kg || 0)
+                      const itemPrice = Number(item.price_per_kg ?? item.price ?? 0)
+                      const itemSubtotal = Number(item.qty) * itemPrice
                       return (
                         <div
                           key={item.id}
@@ -311,7 +312,7 @@ export default function Cart() {
                               {item.name}
                             </h3>
                             <p className="text-xs text-forest font-semibold">
-                              ฿{Number(item.price_per_kg).toLocaleString()} / {item.unit || 'กก.'}
+                              ฿{itemPrice.toLocaleString()} / {item.unit || 'กก.'}
                             </p>
                             {item.harvest_days && (
                               <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5">
@@ -612,7 +613,9 @@ export default function Cart() {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                   {/* Equipment Items List */}
                   <div className="lg:col-span-8 space-y-3">
-                    {equipItems.map(item => (
+                    {equipItems.map(item => {
+                      const itemPrice = Number(item.price_per_kg ?? item.price ?? 0)
+                      return (
                       <div
                         key={item.id}
                         className="flex items-center gap-3.5 p-3.5 bg-gray-50/70 border border-gray-100 rounded-2xl"
@@ -628,7 +631,7 @@ export default function Cart() {
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-gray-800 text-sm truncate">{item.name}</p>
                           <p className="text-xs text-blue-600 font-medium">
-                            ฿{Number(item.price_per_kg).toLocaleString()} / {item.unit || 'ชิ้น'}
+                            ฿{itemPrice.toLocaleString()} / {item.unit || 'ชิ้น'}
                           </p>
                         </div>
 
@@ -651,7 +654,7 @@ export default function Cart() {
                         </div>
 
                         <p className="font-bold text-gray-800 text-sm w-20 text-right flex-shrink-0">
-                          ฿{(Number(item.qty) * Number(item.price_per_kg)).toLocaleString()}
+                          ฿{(Number(item.qty) * itemPrice).toLocaleString()}
                         </p>
 
                         <button
@@ -662,7 +665,8 @@ export default function Cart() {
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
 
                   {/* Equipment Checkout Box */}

@@ -9,12 +9,24 @@ export function CartProvider({ children }) {
 
   const getCartKey = (uid) => uid ? `hydro_cart_${uid}` : 'hydro_cart_guest'
 
+  const normalizeCartItem = (i) => {
+    if (!i) return i
+    const rawPrice = i.price_per_kg ?? i.price ?? 0
+    const unitPrice = isNaN(Number(rawPrice)) ? 0 : Number(rawPrice)
+    return {
+      ...i,
+      price: unitPrice,
+      price_per_kg: unitPrice,
+    }
+  }
+
   // โหลด cart เฉพาะของบัญชีปัจจุบัน
   const [cart, setCart] = useState(() => {
     try {
       const key = userId ? `hydro_cart_${userId}` : 'hydro_cart_guest'
       const saved = localStorage.getItem(key)
-      return saved ? JSON.parse(saved) : []
+      const list = saved ? JSON.parse(saved) : []
+      return Array.isArray(list) ? list.map(normalizeCartItem) : []
     } catch { return [] }
   })
 
@@ -23,7 +35,8 @@ export function CartProvider({ children }) {
     try {
       const key = getCartKey(userId)
       const saved = localStorage.getItem(key)
-      setCart(saved ? JSON.parse(saved) : [])
+      const list = saved ? JSON.parse(saved) : []
+      setCart(Array.isArray(list) ? list.map(normalizeCartItem) : [])
     } catch {
       setCart([])
     }
@@ -47,15 +60,31 @@ export function CartProvider({ children }) {
     const defaultQty = isVeg ? 1 : 1
     const qtyToAdd = quantity !== null && Number(quantity) > 0 ? Number(quantity) : defaultQty
 
+    const rawPrice = product.price_per_kg ?? product.price ?? 0
+    const unitPrice = isNaN(Number(rawPrice)) ? 0 : Number(rawPrice)
+    const normalizedProduct = {
+      ...product,
+      price: unitPrice,
+      price_per_kg: unitPrice,
+    }
+
     setCart(prev => {
-      const existing = prev.find(i => i.id === product.id)
+      const existing = prev.find(i => i.id === normalizedProduct.id)
       if (existing) {
         const rawNewQty = Number(existing.qty) + qtyToAdd
         const roundedQty = isVeg ? Math.round(rawNewQty * 10) / 10 : Math.round(rawNewQty)
-        return prev.map(i => i.id === product.id ? { ...i, qty: roundedQty } : i)
+        const existingPrice = Number(existing.price_per_kg ?? existing.price ?? 0)
+        const finalPrice = unitPrice > 0 ? unitPrice : existingPrice
+        return prev.map(i => i.id === normalizedProduct.id ? {
+          ...i,
+          ...normalizedProduct,
+          price: finalPrice,
+          price_per_kg: finalPrice,
+          qty: roundedQty
+        } : i)
       }
       const initialQty = isVeg ? Math.round(qtyToAdd * 10) / 10 : Math.round(qtyToAdd)
-      return [...prev, { ...product, qty: initialQty }]
+      return [...prev, { ...normalizedProduct, qty: initialQty }]
     })
   }
 
@@ -95,12 +124,17 @@ export function CartProvider({ children }) {
   const vegItems = cart.filter(i => i.category === 'vegetable')
   const equipItems = cart.filter(i => i.category !== 'vegetable')
 
+  const getItemPrice = (i) => {
+    const p = Number(i?.price_per_kg ?? i?.price ?? 0)
+    return isNaN(p) ? 0 : p
+  }
+
   const totalItems = cart.reduce((s, i) => s + (Number(i.qty) > 0 ? 1 : 0), 0)
   const totalItemCount = cart.reduce((s, i) => s + Number(i.qty), 0)
 
-  const vegTotalPrice = vegItems.reduce((s, i) => s + (Number(i.qty) * Number(i.price_per_kg || 0)), 0)
-  const equipTotalPrice = equipItems.reduce((s, i) => s + (Number(i.qty) * Number(i.price_per_kg || 0)), 0)
-  const totalPrice = cart.reduce((s, i) => s + (Number(i.qty) * Number(i.price_per_kg || 0)), 0)
+  const vegTotalPrice = vegItems.reduce((s, i) => s + (Number(i.qty) * getItemPrice(i)), 0)
+  const equipTotalPrice = equipItems.reduce((s, i) => s + (Number(i.qty) * getItemPrice(i)), 0)
+  const totalPrice = cart.reduce((s, i) => s + (Number(i.qty) * getItemPrice(i)), 0)
 
   const vegTotalWeight = vegItems.reduce((s, i) => s + Number(i.qty), 0)
 

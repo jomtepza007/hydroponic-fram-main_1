@@ -249,11 +249,45 @@ DROP POLICY IF EXISTS "Admins and farmers can view all profiles" ON profiles;
 CREATE POLICY "Admins and farmers can view all profiles" ON profiles
   FOR SELECT USING (get_my_role() IN ('admin', 'farmer'));
 
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile" ON profiles
-  FOR UPDATE USING (auth.uid() = id);
+  FOR UPDATE 
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Admins can update all profiles" ON profiles;
 CREATE POLICY "Admins can update all profiles" ON profiles
   FOR UPDATE USING (get_my_role() = 'admin');
+
+-- Trigger ป้องกันผู้ใช้ทั่วไปแก้ไข role, is_banned, หรือ customer_type (ข้อ 1)
+CREATE OR REPLACE FUNCTION protect_profile_fields()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF (auth.jwt() ->> 'role') = 'service_role' OR auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF (OLD.role IS DISTINCT FROM NEW.role OR 
+      OLD.is_banned IS DISTINCT FROM NEW.is_banned OR 
+      OLD.customer_type IS DISTINCT FROM NEW.customer_type) THEN
+    IF get_my_role() != 'admin' THEN
+      RAISE EXCEPTION 'ไม่อนุญาตให้แก้ไขสิทธิ์ผู้ใช้งานหรือสถานะบัญชี (role, is_banned, customer_type) ยกเว้น Admin เท่านั้น';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_protect_profile_fields ON profiles;
+CREATE TRIGGER trg_protect_profile_fields
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION protect_profile_fields();
 
 -- Orders: Customer ดูเฉพาะของตัวเอง, Farmer/Admin ดูได้ทั้งหมด
 CREATE POLICY "Customers view own orders" ON orders
@@ -279,6 +313,59 @@ CREATE POLICY "Farmers and admins update orders" ON orders
         AND profiles.role IN ('farmer', 'admin')
     )
   );
+
+-- ลูกค้ายกเลิกคำสั่งซื้อของตนเองได้เมื่อสถานะเป็น waiting_cycle หรือ pending (ข้อ 3)
+DROP POLICY IF EXISTS "Customers can cancel own pending orders" ON orders;
+CREATE POLICY "Customers can cancel own pending orders" ON orders
+  FOR UPDATE
+  USING (
+    auth.uid() = customer_id 
+    AND status IN ('waiting_cycle', 'pending')
+  )
+  WITH CHECK (
+    auth.uid() = customer_id 
+    AND status = 'cancelled'
+  );
+
+-- Trigger ป้องกันการดัดแปลงข้อมูลคำสั่งซื้อสำคัญเมื่อลูกค้ายกเลิก (ข้อ 3)
+CREATE OR REPLACE FUNCTION protect_order_updates()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF (auth.jwt() ->> 'role') = 'service_role' OR auth.uid() IS NULL OR get_my_role() IN ('farmer', 'admin') THEN
+    RETURN NEW;
+  END IF;
+
+  IF auth.uid() = OLD.customer_id THEN
+    IF OLD.status NOT IN ('waiting_cycle', 'pending') THEN
+      RAISE EXCEPTION 'ไม่สามารถยกเลิกคำสั่งซื้อที่ได้รับการดำเนินการแล้วได้';
+    END IF;
+
+    IF NEW.status != 'cancelled' THEN
+      RAISE EXCEPTION 'ลูกค้าสามารถเปลี่ยนสถานะเป็นยกเลิก (cancelled) ได้เท่านั้น';
+    END IF;
+
+    IF NEW.customer_id != OLD.customer_id OR 
+       NEW.total_amount IS DISTINCT FROM OLD.total_amount OR 
+       NEW.final_amount IS DISTINCT FROM OLD.final_amount THEN
+      RAISE EXCEPTION 'ไม่อนุญาตให้แก้ไขยอดเงินหรือข้อมูลสำคัญของคำสั่งซื้อ';
+    END IF;
+
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'ไม่มีสิทธิ์แก้ไขคำสั่งซื้อนี้';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_protect_order_updates ON orders;
+CREATE TRIGGER trg_protect_order_updates
+  BEFORE UPDATE ON orders
+  FOR EACH ROW
+  EXECUTE FUNCTION protect_order_updates();
 
 -- Order Items: Customer ดูเฉพาะของตัวเอง, Farmer/Admin ดูได้ทั้งหมด
 CREATE POLICY "Customers view own order items" ON order_items
@@ -320,7 +407,12 @@ CREATE POLICY "Anyone can view discount logs" ON discount_logs
 CREATE POLICY "Farmers and admins manage discount logs" ON discount_logs
   FOR ALL USING (get_my_role() IN ('farmer', 'admin'));
 
--- Notifications: ดูและแก้ไขเฉพาะของตัวเอง, สามารถส่งแจ้งเตือนได้ทุกคน
+-- Notifications: ดูและแก้ไขเฉพาะของตัวเอง, อนุญาตให้ส่งแจ้งเตือนเฉพาะผู้ล็อกอินหรือทีมงาน
+DROP POLICY IF EXISTS "Users can view own notifications" ON notifications;
+DROP POLICY IF EXISTS "Users can update own notifications" ON notifications;
+DROP POLICY IF EXISTS "Anyone can insert notifications" ON notifications;
+DROP POLICY IF EXISTS "Authenticated users or staff can insert notifications" ON notifications;
+
 CREATE POLICY "Users can view own notifications" ON notifications
   FOR SELECT USING (auth.uid() = user_id);
 
@@ -328,8 +420,13 @@ CREATE POLICY "Users can update own notifications" ON notifications
   FOR UPDATE USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Anyone can insert notifications" ON notifications
-  FOR INSERT WITH CHECK (true);
+CREATE POLICY "Authenticated users or staff can insert notifications" ON notifications
+  FOR INSERT WITH CHECK (
+    auth.uid() IS NOT NULL AND (
+      auth.uid() = user_id 
+      OR get_my_role() IN ('farmer', 'admin')
+    )
+  );
 
 
 -- Vegetable Types: ทุกคนอ่านได้, Farmer/Admin จัดการได้ทั้งหมด
@@ -403,7 +500,7 @@ CREATE POLICY "Admins manage farm settings" ON farm_settings
 -- STORED FUNCTIONS / PROCEDURES (ATOMIC OPERATIONS)
 -- ============================================
 
--- ปรับสต็อกแบบ Atomic ป้องกัน Race Condition และข้าม RLS ด้วย SECURITY DEFINER
+-- ปรับสต็อกแบบ Atomic ป้องกัน Race Condition และข้าม RLS ด้วย SECURITY DEFINER (เฉพาะทีมงาน farmer/admin)
 CREATE OR REPLACE FUNCTION adjust_resource_qty(r_id uuid, delta decimal)
 RETURNS decimal
 LANGUAGE plpgsql
@@ -413,6 +510,10 @@ AS $$
 DECLARE
   new_qty decimal;
 BEGIN
+  IF get_my_role() NOT IN ('farmer', 'admin') THEN
+    RAISE EXCEPTION 'ไม่มีสิทธิ์ปรับสต็อกทรัพยากร (เฉพาะทีมงานเกษตรกรและแอดมินเท่านั้น)';
+  END IF;
+
   UPDATE public.resources
   SET current_qty = GREATEST(0, current_qty + delta)
   WHERE id = r_id
@@ -420,9 +521,10 @@ BEGIN
   RETURN new_qty;
 END;
 $$;
-GRANT EXECUTE ON FUNCTION adjust_resource_qty(uuid, decimal) TO authenticated, anon;
+REVOKE EXECUTE ON FUNCTION adjust_resource_qty(uuid, decimal) FROM anon, public;
+GRANT EXECUTE ON FUNCTION adjust_resource_qty(uuid, decimal) TO authenticated;
 
--- ตัดสต็อกอุปกรณ์ของคำสั่งซื้อแบบ Atomic ทั้งชุด (Idempotent + Security Definer)
+-- ตัดสต็อกอุปกรณ์ของคำสั่งซื้อแบบ Atomic ทั้งชุด (เฉพาะเจ้าของออเดอร์ หรือ farmer/admin)
 CREATE OR REPLACE FUNCTION deduct_order_equipment_stock(p_order_id uuid)
 RETURNS json
 LANGUAGE plpgsql
@@ -430,9 +532,23 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_order RECORD;
   v_item RECORD;
   v_deducted_count int := 0;
 BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Unauthorized');
+  END IF;
+
+  SELECT * INTO v_order FROM public.orders WHERE id = p_order_id;
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'ไม่พบคำสั่งซื้อที่ระบุ');
+  END IF;
+
+  IF v_order.customer_id != auth.uid() AND get_my_role() NOT IN ('farmer', 'admin') THEN
+    RETURN json_build_object('success', false, 'error', 'ไม่มีสิทธิ์ตัดสต็อกสำหรับคำสั่งซื้อนี้');
+  END IF;
+
   -- ตรวจสอบว่า order นี้เคยตัดสต็อกไปแล้วหรือไม่ เพื่อป้องกันการตัดซ้ำ
   IF EXISTS (SELECT 1 FROM public.resource_transactions WHERE related_order_id = p_order_id) THEN
     RETURN json_build_object('success', true, 'message', 'Already deducted', 'deducted_count', 0);
@@ -476,7 +592,8 @@ BEGIN
   RETURN json_build_object('success', true, 'deducted_count', v_deducted_count);
 END;
 $$;
-GRANT EXECUTE ON FUNCTION deduct_order_equipment_stock(uuid) TO authenticated, anon;
+REVOKE EXECUTE ON FUNCTION deduct_order_equipment_stock(uuid) FROM anon, public;
+GRANT EXECUTE ON FUNCTION deduct_order_equipment_stock(uuid) TO authenticated;
 
 -- ดึงทรัพยากรที่ใกล้หมด (current_qty <= min_threshold)
 CREATE OR REPLACE FUNCTION get_low_stock_resources()
@@ -485,6 +602,8 @@ RETURNS SETOF resources AS $$
   WHERE current_qty <= min_threshold
   ORDER BY current_qty ASC;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
+REVOKE EXECUTE ON FUNCTION get_low_stock_resources() FROM anon, public;
+GRANT EXECUTE ON FUNCTION get_low_stock_resources() TO authenticated;
 
 -- ผักที่สั่งซื้อมากที่สุด คำนวณฝั่ง Database (ไม่จำกัดจำนวนรายการ)
 CREATE OR REPLACE FUNCTION get_top_vegetables(limit_count int DEFAULT 10)
@@ -554,7 +673,7 @@ BEGIN
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     LEFT JOIN vegetable_types vt ON oi.vegetable_type_id = vt.id
-    WHERE o.status IN ('pending', 'confirmed', 'seeding', 'growing', 'ready')
+    WHERE o.status IN ('waiting_cycle', 'pending', 'confirmed', 'seeding', 'growing', 'ready')
       AND (target_vegetable_type_id IS NULL OR oi.vegetable_type_id = target_vegetable_type_id)
   ),
   overlapping_items AS (
@@ -598,6 +717,7 @@ END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- บันทึกและปรับส่วนลดต่อรายการแบบ Atomic พร้อมบันทึกประวัติ (Discount System)
+-- บันทึกและปรับส่วนลดต่อรายการแบบ Atomic พร้อมบันทึกประวัติ (เฉพาะ farmer/admin)
 CREATE OR REPLACE FUNCTION apply_item_discount(
   p_order_item_id uuid,
   p_discount_rate decimal,
@@ -610,6 +730,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_caller_role text;
   v_item RECORD;
   v_order RECORD;
   v_old_rate decimal;
@@ -619,6 +740,11 @@ DECLARE
   v_final_price decimal;
   v_order_final_amount decimal;
 BEGIN
+  v_caller_role := get_my_role();
+  IF v_caller_role NOT IN ('farmer', 'admin') THEN
+    RETURN json_build_object('success', false, 'error', 'ไม่มีสิทธิ์กำหนดส่วนลด (เฉพาะทีมงานเกษตรกรและแอดมินเท่านั้น)');
+  END IF;
+
   SELECT * INTO v_item FROM order_items WHERE id = p_order_item_id;
   IF NOT FOUND THEN
     RETURN json_build_object('success', false, 'error', 'Item not found');
@@ -650,7 +776,7 @@ BEGIN
   ) VALUES (
     v_item.order_id,
     p_order_item_id,
-    p_changed_by,
+    COALESCE(p_changed_by, auth.uid()),
     v_old_rate,
     v_new_rate,
     v_discount_amount,
@@ -678,7 +804,256 @@ BEGIN
   );
 END;
 $$;
-GRANT EXECUTE ON FUNCTION apply_item_discount(uuid, decimal, text, uuid) TO authenticated, anon;
+REVOKE EXECUTE ON FUNCTION apply_item_discount(uuid, decimal, text, uuid) FROM anon, public;
+GRANT EXECUTE ON FUNCTION apply_item_discount(uuid, decimal, text, uuid) TO authenticated;
+
+-- บันทึกและปรับส่วนลดทั้งออเดอร์ (เฉพาะ farmer/admin)
+CREATE OR REPLACE FUNCTION apply_order_discount(
+  p_order_id uuid,
+  p_discount_type text,
+  p_discount_value decimal,
+  p_note text DEFAULT NULL,
+  p_changed_by uuid DEFAULT NULL
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_role text;
+  v_order RECORD;
+  v_subtotal decimal := 0;
+  v_val decimal := 0;
+  v_discount_amount decimal := 0;
+  v_final_amount decimal := 0;
+BEGIN
+  v_caller_role := get_my_role();
+  IF v_caller_role NOT IN ('farmer', 'admin') THEN
+    RETURN json_build_object('success', false, 'error', 'ไม่มีสิทธิ์กำหนดส่วนลด (เฉพาะทีมงานเกษตรกรและแอดมินเท่านั้น)');
+  END IF;
+
+  SELECT * INTO v_order FROM orders WHERE id = p_order_id;
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'ไม่พบออเดอร์ที่ระบุ');
+  END IF;
+
+  IF v_order.status NOT IN ('waiting_cycle', 'pending', 'scheduling') THEN
+    RETURN json_build_object('success', false, 'error', 'ไม่สามารถแก้ไขส่วนลดได้เนื่องจากออเดอร์ได้รับการยืนยันแล้ว');
+  END IF;
+
+  SELECT COALESCE(SUM(COALESCE(final_price, quantity * price_at_order)), 0)
+  INTO v_subtotal
+  FROM order_items
+  WHERE order_id = p_order_id;
+
+  v_val := GREATEST(0, COALESCE(p_discount_value, 0));
+
+  IF p_discount_type = 'percent' THEN
+    v_val := LEAST(100, v_val);
+    v_discount_amount := ROUND((v_subtotal * (v_val / 100.0)), 2);
+  ELSIF p_discount_type = 'amount' THEN
+    v_discount_amount := LEAST(v_subtotal, v_val);
+  ELSE
+    p_discount_type := NULL;
+    v_val := 0;
+    v_discount_amount := 0;
+  END IF;
+
+  v_final_amount := GREATEST(0, v_subtotal - v_discount_amount);
+
+  UPDATE orders
+  SET 
+    order_discount_type = p_discount_type,
+    order_discount_value = v_val,
+    order_discount_amount = v_discount_amount,
+    order_discount_note = p_note,
+    final_amount = v_final_amount,
+    updated_at = now()
+  WHERE id = p_order_id;
+
+  INSERT INTO discount_logs (
+    order_id,
+    order_item_id,
+    changed_by,
+    discount_type,
+    discount_value,
+    discount_amount,
+    note
+  ) VALUES (
+    p_order_id,
+    NULL,
+    COALESCE(p_changed_by, auth.uid()),
+    CASE 
+      WHEN p_discount_type IS NULL THEN 'order_clear'
+      WHEN p_discount_type = 'percent' THEN 'order_percent'
+      ELSE 'order_amount'
+    END,
+    v_val,
+    v_discount_amount,
+    p_note
+  );
+
+  RETURN json_build_object(
+    'success', true,
+    'order_discount_type', p_discount_type,
+    'order_discount_value', v_val,
+    'order_discount_amount', v_discount_amount,
+    'final_amount', v_final_amount,
+    'subtotal', v_subtotal
+  );
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION apply_order_discount(uuid, text, decimal, text, uuid) FROM anon, public;
+GRANT EXECUTE ON FUNCTION apply_order_discount(uuid, text, decimal, text, uuid) TO authenticated;
+
+-- RPC notify_staff สำหรับส่งการแจ้งเตือนไปยัง Farmer & Admin ทุกคน (ข้าม RLS)
+CREATE OR REPLACE FUNCTION notify_staff(
+  p_title text,
+  p_message text,
+  p_type text DEFAULT 'order_status',
+  p_order_id uuid DEFAULT NULL
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_staff RECORD;
+  v_count integer := 0;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Unauthorized');
+  END IF;
+
+  FOR v_staff IN 
+    SELECT id FROM profiles WHERE role IN ('farmer', 'admin')
+  LOOP
+    INSERT INTO notifications (user_id, title, message, type, related_id, is_read)
+    VALUES (v_staff.id, p_title, p_message, p_type, p_order_id, false);
+    v_count := v_count + 1;
+  END LOOP;
+
+  RETURN json_build_object('success', true, 'count', v_count);
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION notify_staff(text, text, text, uuid) FROM anon, public;
+GRANT EXECUTE ON FUNCTION notify_staff(text, text, text, uuid) TO authenticated;
+
+-- Trigger แจ้งเตือน Farmer & Admin และลูกค้า อัตโนมัติเมื่อมีคำสั่งซื้อใหม่ (AFTER INSERT ON orders)
+CREATE OR REPLACE FUNCTION trg_on_order_created()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_staff RECORD;
+  v_customer RECORD;
+  v_short_id text;
+  v_customer_name text := 'ลูกค้า';
+  v_is_equipment boolean;
+  v_display_amount decimal;
+BEGIN
+  v_short_id := UPPER(SUBSTRING(NEW.id::text, 1, 8));
+  v_display_amount := COALESCE(NEW.final_amount, NEW.total_amount, 0);
+  
+  SELECT full_name INTO v_customer FROM profiles WHERE id = NEW.customer_id;
+  IF FOUND AND v_customer.full_name IS NOT NULL AND v_customer.full_name != '' THEN
+    v_customer_name := v_customer.full_name;
+  END IF;
+
+  v_is_equipment := (NEW.notes ILIKE '%จัดส่งถึงบ้าน%' OR NEW.notes ILIKE '%📦 จัดส่ง%');
+
+  FOR v_staff IN 
+    SELECT id FROM profiles WHERE role IN ('farmer', 'admin')
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM notifications 
+      WHERE user_id = v_staff.id 
+        AND related_id = NEW.id 
+        AND type = 'new_order'
+    ) THEN
+      INSERT INTO notifications (user_id, title, message, type, related_id, is_read)
+      VALUES (
+        v_staff.id,
+        '🛒 มีออเดอร์ใหม่ #' || v_short_id,
+        'ลูกค้า "' || v_customer_name || '" สั่งซื้อ ยอด ฿' || TO_CHAR(v_display_amount, 'FM999,999,990.00') || (CASE WHEN v_is_equipment THEN ' (อุปกรณ์ปลูก)' ELSE ' (รอยืนยันรอบปลูก)' END),
+        'new_order',
+        NEW.id,
+        false
+      );
+    END IF;
+  END LOOP;
+
+  IF NEW.customer_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM notifications 
+      WHERE user_id = NEW.customer_id 
+        AND related_id = NEW.id 
+        AND type = 'new_order'
+    ) THEN
+      INSERT INTO notifications (user_id, title, message, type, related_id, is_read)
+      VALUES (
+        NEW.customer_id,
+        '🎉 คำสั่งซื้อ #' || v_short_id || ' สำเร็จ',
+        'คำสั่งซื้อของคุณได้รับการบันทึกแล้ว กำลังรอฟาร์มตรวจสอบและยืนยันรอบปลูก',
+        'new_order',
+        NEW.id,
+        false
+      );
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_notify_new_order ON orders;
+CREATE TRIGGER trg_notify_new_order
+  AFTER INSERT ON orders
+  FOR EACH ROW
+  EXECUTE FUNCTION trg_on_order_created();
+
+-- Trigger แจ้งเตือน Farmer & Admin อัตโนมัติเมื่อลูกค้ายกเลิกคำสั่งซื้อ (AFTER UPDATE OF status ON orders)
+CREATE OR REPLACE FUNCTION trg_on_order_cancelled()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_staff RECORD;
+  v_short_id text;
+BEGIN
+  IF NEW.status = 'cancelled' AND (OLD.status IS DISTINCT FROM NEW.status) THEN
+    v_short_id := UPPER(SUBSTRING(NEW.id::text, 1, 8));
+
+    FOR v_staff IN 
+      SELECT id FROM profiles WHERE role IN ('farmer', 'admin')
+    LOOP
+      INSERT INTO notifications (user_id, title, message, type, related_id, is_read)
+      VALUES (
+        v_staff.id,
+        '⚠️ ลูกค้ายกเลิกออเดอร์ #' || v_short_id,
+        'คำสั่งซื้อ #' || v_short_id || ' ถูกยกเลิกโดยลูกค้า',
+        'order_status',
+        NEW.id,
+        false
+      );
+    END LOOP;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_notify_order_cancelled ON orders;
+CREATE TRIGGER trg_notify_order_cancelled
+  AFTER UPDATE OF status ON orders
+  FOR EACH ROW
+  EXECUTE FUNCTION trg_on_order_cancelled();
 
 -- ============================================
 -- MIGRATION STATEMENTS (สำหรับอัปเดต DB เดิม)

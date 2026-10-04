@@ -14,11 +14,17 @@
 
   html {
     scroll-behavior: smooth;
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
   }
 
   body {
     @apply bg-background text-gray-800 font-sans antialiased;
     min-height: 100vh;
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -105,7 +111,7 @@
 
   /* --- Badges / Status --- */
   .badge {
-    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold;
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap;
   }
 
   .badge-waiting     { @apply badge bg-amber-100 text-amber-700; }
@@ -154,7 +160,7 @@
   }
 
   .table thead th {
-    @apply px-5 py-3.5 font-semibold;
+    @apply px-4 py-3 font-semibold;
   }
 
   .table tbody tr {
@@ -162,7 +168,7 @@
   }
 
   .table tbody td {
-    @apply px-5 py-3.5 text-gray-700;
+    @apply px-4 py-3 text-gray-700;
   }
 
   /* --- Sidebar --- */

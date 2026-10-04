@@ -6,6 +6,7 @@ import Footer from '../../components/layout/Footer'
 import { useCart } from '../../context/CartContext'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../api/supabaseClient'
+import { notifyCustomerNewOrder, notifyStaffNewOrder } from '../../api/notifications'
 import toast from 'react-hot-toast'
 
 export default function EquipmentCheckout() {
@@ -49,40 +50,70 @@ export default function EquipmentCheckout() {
     const shippingAddress = addressParts.join(' ')
 
     try {
-      // สร้าง order
+      // 1. ดึงข้อมูล vegetable_types ล่าสุดเพื่อตรวจสอบราคาจริงและ resource_id (Server Price Validation)
+      const itemIds = cart.map(i => i.id).filter(Boolean)
+      const { data: dbItems } = await supabase
+        .from('vegetable_types')
+        .select('id, name, category, resource_id, price_per_kg, unit')
+        .in('id', itemIds)
+
+      const dbMap = new Map((dbItems || []).map(d => [d.id, d]))
+
+      let validatedTotal = 0
+      const itemsPayload = cart.map(item => {
+        const dbItem = dbMap.get(item.id)
+        const unitPrice = Number(dbItem?.price_per_kg ?? item.price_per_kg ?? item.price ?? 0)
+        const qty = Number(item.qty) || 1
+        validatedTotal += Math.round(qty * unitPrice * 100) / 100
+
+        return {
+          vegetable_type_id: item.id,
+          quantity: qty,
+          price_at_order: unitPrice,
+          unit: item.unit || dbItem?.unit || 'ชิ้น',
+          slots_required: 0,
+        }
+      })
+
+      const finalTotalPrice = Math.round(validatedTotal * 100) / 100
+
+      // 2. สร้าง order ด้วยยอดรวมที่ตรวจสอบแล้ว
       const { data: order, error: orderErr } = await supabase
         .from('orders')
         .insert([{
           customer_id: user.id,
           status: 'pending',
           pickup_date: pickupDate,
-          total_amount: totalPrice,
+          total_amount: finalTotalPrice,
           notes: `📦 จัดส่งถึงบ้าน\nผู้รับ: ${form.recipient_name}\nโทร: ${form.phone}\nที่อยู่: ${shippingAddress}\n${form.notes ? 'หมายเหตุ: ' + form.notes : ''}`,
         }])
         .select()
         .single()
       if (orderErr) throw orderErr
 
-      // สร้าง order_items
-      const items = cart.map(item => ({
+      // 3. สร้าง order_items
+      const itemsWithOrderId = itemsPayload.map(it => ({
+        ...it,
         order_id: order.id,
-        vegetable_type_id: item.id,
-        quantity: item.qty,
-        price_at_order: Number(item.price_per_kg),
-        unit: item.unit,
-        slots_required: 0,
       }))
-      const { error: itemErr } = await supabase.from('order_items').insert(items)
-      if (itemErr) throw itemErr
+      const { error: itemErr } = await supabase.from('order_items').insert(itemsWithOrderId)
+      if (itemErr) {
+        // Rollback ลบ order หากการสร้างรายการสินค้าล้มเหลว
+        try {
+          await supabase.from('orders').delete().eq('id', order.id)
+        } catch (delErr) {
+          console.warn('Failed to rollback equipment order:', delErr)
+        }
+        throw itemErr
+      }
 
-      // ดึงข้อมูล vegetable_types ล่าสุดเพื่อดึง resource_id ของแต่ละสินค้าในตะกร้าอย่างแม่นยำ
-      const itemIds = cart.map(i => i.id).filter(Boolean)
-      const { data: dbItems } = await supabase
-        .from('vegetable_types')
-        .select('id, name, category, resource_id')
-        .in('id', itemIds)
-
-      const dbMap = new Map((dbItems || []).map(d => [d.id, d]))
+      // 4. ส่งการแจ้งเตือนคำสั่งซื้ออุปกรณ์ให้ลูกค้าและทีมงาน
+      try {
+        notifyCustomerNewOrder(order.id, user.id)
+        notifyStaffNewOrder(order.id, finalTotalPrice, form.recipient_name || user?.user_metadata?.full_name || '')
+      } catch (notifErr) {
+        console.warn('Equipment order notification failed:', notifErr)
+      }
 
       // ตัดสต็อกอัตโนมัติสำหรับ equipment แบบ Atomic ระดับคำสั่งซื้อ (Security Definer)
       let rpcDeducted = false
@@ -215,9 +246,9 @@ export default function EquipmentCheckout() {
                       </div>
                       <div className="flex-1">
                         <p className="font-medium text-gray-800 text-sm">{item.name}</p>
-                        <p className="text-xs text-gray-400">{item.qty} {item.unit} × ฿{Number(item.price_per_kg).toLocaleString()}</p>
+                        <p className="text-xs text-gray-400">{item.qty} {item.unit} × ฿{Number(item.price_per_kg ?? item.price ?? 0).toLocaleString()}</p>
                       </div>
-                      <p className="font-bold text-gray-800">฿{(item.qty * Number(item.price_per_kg)).toLocaleString()}</p>
+                      <p className="font-bold text-gray-800">฿{(item.qty * Number(item.price_per_kg ?? item.price ?? 0)).toLocaleString()}</p>
                     </div>
                   ))}
                 </div>
@@ -323,7 +354,7 @@ export default function EquipmentCheckout() {
                 {cart.map(item => (
                   <div key={item.id} className="flex justify-between text-xs text-gray-500">
                     <span className="truncate pr-1">{item.name} × {item.qty}</span>
-                    <span>฿{(item.qty * Number(item.price_per_kg)).toLocaleString()}</span>
+                    <span>฿{(item.qty * Number(item.price_per_kg ?? item.price ?? 0)).toLocaleString()}</span>
                   </div>
                 ))}
               </div>

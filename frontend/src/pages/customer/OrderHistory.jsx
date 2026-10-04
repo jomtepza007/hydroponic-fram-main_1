@@ -42,13 +42,21 @@ export default function OrderHistory() {
 
     let count = 0
     order.order_items.forEach(item => {
+      const rawPrice = item.price_at_order > 0
+        ? item.price_at_order
+        : (item.vegetable_types?.price_per_kg ?? item.vegetable_types?.price ?? item.price ?? 0)
+      const unitPrice = isNaN(Number(rawPrice)) ? 0 : Number(rawPrice)
+
       const product = {
         id: item.vegetable_type_id || item.vegetable_types?.id,
-        name: item.vegetable_types?.name || 'สินค้า',
-        category: item.vegetable_types?.category || 'vegetable',
-        price: Number(item.price_at_order) || 0,
+        name: item.vegetable_types?.name || item.name || 'สินค้า',
+        category: item.vegetable_types?.category || item.category || 'vegetable',
+        price: unitPrice,
+        price_per_kg: unitPrice,
         unit: item.vegetable_types?.unit || item.unit || 'กก.',
         image_url: item.vegetable_types?.image_url,
+        harvest_days: Number(item.vegetable_types?.harvest_days) || 30,
+        slots_per_kg: Number(item.vegetable_types?.slots_per_kg) || 4,
       }
       if (product.id) {
         addToCart(product, Number(item.quantity) || 1)
@@ -61,19 +69,19 @@ export default function OrderHistory() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background w-full overflow-x-hidden">
       <Navbar />
 
-      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-28">
+      <main className="flex-1 w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6 sm:mb-8 gap-3">
           <div>
-            <h1 className="page-title">ออเดอร์ของฉัน</h1>
-            <p className="page-subtitle">ติดตามสถานะการปลูกทั้งหมด</p>
+            <h1 className="page-title text-2xl sm:text-3xl">ออเดอร์ของฉัน</h1>
+            <p className="page-subtitle text-xs sm:text-sm">ติดตามสถานะการปลูกทั้งหมด</p>
           </div>
-          <Link to="/products" className="btn-primary">
+          <Link to="/products" className="btn-primary py-2 px-3.5 sm:px-5 text-xs sm:text-sm flex-shrink-0">
             <Plus className="w-4 h-4" />
-            สั่งจองใหม่
+            <span>สั่งจองใหม่</span>
           </Link>
         </div>
 
@@ -92,54 +100,64 @@ export default function OrderHistory() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
             {orders.map(order => (
               <Link
                 key={order.id}
                 to={`/orders/${order.id}`}
-                className="card-hover flex items-center justify-between gap-4 group"
+                className="card-hover block p-4 sm:p-5 group transition-all"
               >
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-primary-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-primary-100 transition-colors">
-                    <ShoppingBag className="w-5 h-5 text-forest" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="font-semibold text-gray-800">
-                        ออเดอร์ #{order.id.slice(0, 8).toUpperCase()}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
+                  {/* Left: Info */}
+                  <div className="flex items-start gap-3 sm:gap-4 flex-1 min-w-0">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-primary-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-primary-100 transition-colors mt-0.5 sm:mt-0">
+                      <ShoppingBag className="w-5 h-5 text-forest" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
+                        <p className="font-semibold text-gray-800 text-sm sm:text-base">
+                          ออเดอร์ #{order.id.slice(0, 8).toUpperCase()}
+                        </p>
+                        <OrderStatusBadge
+                          status={order.status}
+                          isEquipment={isEquipmentOrder(order)}
+                        />
+                      </div>
+                      <p className="text-xs sm:text-sm text-gray-500 truncate">
+                        {order.order_items?.map(i => i.vegetable_types?.name).filter(Boolean).join(', ') || 'ไม่มีรายละเอียดสินค้า'}
                       </p>
-                      <OrderStatusBadge
-                        status={order.status}
-                        isEquipment={isEquipmentOrder(order)}
-                      />
+                      <p className="text-[11px] sm:text-xs text-gray-400 mt-1 leading-tight">
+                        รับสินค้า: {formatDateTh(order.pickup_date)} • สั่งเมื่อ {formatDateTh(order.created_at)}
+                      </p>
                     </div>
-                    <p className="text-sm text-gray-400">
-                      {order.order_items?.map(i => i.vegetable_types?.name).join(', ')}
-                    </p>
-                    <p className="text-xs text-gray-300 mt-1">
-                      รับสินค้า: {formatDateTh(order.pickup_date)} • สั่งเมื่อ {formatDateTh(order.created_at)}
-                    </p>
                   </div>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0 text-right">
-                  {order.status !== 'pending' && order.final_amount != null && Number(order.final_amount) < Number(order.total_amount) ? (
-                    <div>
-                      <span className="text-xs text-gray-400 line-through block">฿{Number(order.total_amount).toLocaleString()}</span>
-                      <span className="font-bold text-forest">฿{Number(order.final_amount).toLocaleString()}</span>
+
+                  {/* Right: Price & Action */}
+                  <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-0 border-t border-gray-100 sm:border-t-0 flex-shrink-0">
+                    <div className="text-left sm:text-right">
+                      {order.status !== 'pending' && order.final_amount != null && Number(order.final_amount) < Number(order.total_amount) ? (
+                        <div>
+                          <span className="text-[11px] text-gray-400 line-through block leading-none">฿{Number(order.total_amount).toLocaleString()}</span>
+                          <span className="font-bold text-forest text-base sm:text-lg">฿{Number(order.final_amount).toLocaleString()}</span>
+                        </div>
+                      ) : (
+                        <p className="font-bold text-forest text-base sm:text-lg">฿{Number(order.total_amount).toLocaleString()}</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="font-bold text-forest">฿{Number(order.total_amount).toLocaleString()}</p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => handleReorder(e, order)}
-                    className="btn-sm bg-primary-100 text-forest hover:bg-primary-200 flex items-center gap-1.5 transition-all text-xs font-semibold px-3 py-1.5 rounded-xl shadow-xs"
-                    title="สั่งซื้อรายการเดิมอีกครั้ง"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    สั่งอีกครั้ง
-                  </button>
-                  <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-forest transition-colors" />
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => handleReorder(e, order)}
+                        className="btn-sm bg-primary-100 text-forest hover:bg-primary-200 flex items-center gap-1.5 transition-all text-xs font-semibold px-2.5 sm:px-3 py-1.5 rounded-xl shadow-xs active:scale-95 flex-shrink-0"
+                        title="สั่งซื้อรายการเดิมอีกครั้ง"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>สั่งอีกครั้ง</span>
+                      </button>
+                      <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-gray-300 group-hover:text-forest group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+                    </div>
+                  </div>
                 </div>
               </Link>
             ))}

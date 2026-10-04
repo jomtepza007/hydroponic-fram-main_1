@@ -13,7 +13,7 @@ export async function getMyOrders(customerId) {
       *,
       order_items (
         *,
-        vegetable_types (name, image_url, unit, category)
+        vegetable_types (id, name, image_url, unit, category, price_per_kg, harvest_days, slots_per_kg)
       )
     `)
     .eq('customer_id', customerId)
@@ -33,7 +33,7 @@ export async function getOrderById(orderId) {
     profiles!orders_customer_id_fkey (${profileFields}),
     order_items (
       *,
-      vegetable_types (name, image_url, unit, harvest_days, category),
+      vegetable_types (id, name, image_url, unit, harvest_days, category, price_per_kg, slots_per_kg),
       planting_cycles (
         *,
         growing_areas (name, zone_code),
@@ -114,35 +114,82 @@ export async function getAllOrders(filters = {}) {
   return data
 }
 
-/** Customer: สร้างออเดอร์ใหม่ */
+/** Customer: สร้างออเดอร์ใหม่ (พร้อมตรวจสอบราคาจากฐานข้อมูลและ Rollback อัตโนมัติหากผิดพลาด) */
 export async function createOrder(orderData, items) {
-  // สร้าง order
+  // 1. ดึงข้อมูลราคาล่าสุดจากฐานข้อมูล (Server-side validation ป้องกันราคาเพี้ยนจาก localStorage)
+  const itemIds = items.map(it => it.vegetable_type_id || it.id).filter(Boolean)
+  let dbItemsMap = new Map()
+  if (itemIds.length > 0) {
+    try {
+      const { data: dbVegs } = await supabase
+        .from('vegetable_types')
+        .select('id, name, price_per_kg, unit, category, slots_per_kg')
+        .in('id', itemIds)
+      if (dbVegs) {
+        dbItemsMap = new Map(dbVegs.map(v => [v.id, v]))
+      }
+    } catch (fetchErr) {
+      console.warn('Could not verify item prices from DB, using payload prices:', fetchErr)
+    }
+  }
+
+  // 2. คำนวณราคาและเตรียมรายการสินค้าด้วยราคาจริงจากฐานข้อมูล
+  let validatedTotal = 0
+  const validatedItems = items.map(item => {
+    const vegId = item.vegetable_type_id || item.id
+    const dbVeg = dbItemsMap.get(vegId)
+    const price = Number(dbVeg?.price_per_kg ?? item.price_per_kg ?? item.price_at_order ?? item.price ?? 0)
+    const qty = Number(item.quantity || item.qty || 1)
+    const subtotal = Math.round(qty * price * 100) / 100
+    validatedTotal += subtotal
+
+    return {
+      vegetable_type_id: vegId,
+      quantity: qty,
+      price_at_order: price,
+      unit: item.unit || dbVeg?.unit || 'กก.',
+      slots_required: Number(item.slots_required ?? Math.ceil(qty * (dbVeg?.slots_per_kg || 4))),
+    }
+  })
+
+  const validatedOrderData = {
+    ...orderData,
+    total_amount: Math.round(validatedTotal * 100) / 100,
+  }
+
+  // 3. สร้าง order
   const { data: order, error: orderError } = await supabase
     .from('orders')
-    .insert([orderData])
+    .insert([validatedOrderData])
     .select()
     .single()
   if (orderError) throw orderError
 
-  // สร้าง order_items
-  const orderItems = items.map(item => ({
+  // 4. สร้าง order_items
+  const orderItemsWithId = validatedItems.map(item => ({
     ...item,
     order_id: order.id,
   }))
+
   const { error: itemError } = await supabase
     .from('order_items')
-    .insert(orderItems)
-  if (itemError) throw itemError
+    .insert(orderItemsWithId)
 
-  // ส่งการแจ้งเตือนเมื่อสร้างออเดอร์สำเร็จ
+  // หากสร้างรายการสินค้าไม่สำเร็จ ให้ Rollback ลบ order ทันทีเพื่อป้องกันออเดอร์ว่างค้าง
+  if (itemError) {
+    try {
+      await supabase.from('orders').delete().eq('id', order.id)
+    } catch (delErr) {
+      console.warn('Failed to rollback order after item error:', delErr)
+    }
+    throw itemError
+  }
+
+  // 5. ส่งการแจ้งเตือนเมื่อสร้างออเดอร์สำเร็จ
   try {
     if (order?.id && order?.customer_id) {
       notifyCustomerNewOrder(order.id, order.customer_id)
-      const totalAmount = items.reduce(
-        (sum, it) => sum + (Number(it.quantity || 0) * Number(it.price_at_order || 0)),
-        0
-      )
-      notifyStaffNewOrder(order.id, totalAmount, '')
+      notifyStaffNewOrder(order.id, validatedOrderData.total_amount, '')
     }
   } catch (notifErr) {
     console.warn('Could not send new order notification:', notifErr)
@@ -740,7 +787,7 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
         vegetable_types (id, harvest_days, slots_per_kg)
       )
     `)
-    .in('status', ['pending', 'confirmed', 'seeding', 'growing', 'ready'])
+    .in('status', ['waiting_cycle', 'pending', 'confirmed', 'seeding', 'growing', 'ready'])
 
   if (ordersError) throw ordersError
 

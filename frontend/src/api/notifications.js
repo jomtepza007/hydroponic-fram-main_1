@@ -165,20 +165,35 @@ export async function notifyPlantingPhoto(orderId, customerId, caption = '') {
  */
 export async function notifyStaffNewOrder(orderId, totalAmount, customerName = '') {
   if (!orderId) return
+  const shortId = orderId.slice(0, 8).toUpperCase()
+  const title = `🛒 มีออเดอร์ใหม่ #${shortId}`
+  const message = customerName
+    ? `ลูกค้า "${customerName}" สั่งซื้อ ยอด ฿${Number(totalAmount || 0).toLocaleString()}`
+    : `มีคำสั่งซื้อใหม่ ยอด ฿${Number(totalAmount || 0).toLocaleString()} รอยืนยันรอบปลูก`
+
+  // 1. เรียกผ่าน RPC notify_staff (Security Definer ข้ามข้อจำกัด RLS ของ profiles)
   try {
-    // ดึงรายชื่อ staff (farmer & admin)
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('notify_staff', {
+      p_title: title,
+      p_message: message,
+      p_type: 'new_order',
+      p_order_id: orderId,
+    })
+    if (!rpcErr && rpcRes && rpcRes.success) {
+      return rpcRes
+    }
+  } catch (rpcErr) {
+    console.warn('RPC notify_staff failed, falling back:', rpcErr)
+  }
+
+  // 2. Client fallback หากไม่มี RPC
+  try {
     const { data: staffUsers } = await supabase
       .from('profiles')
       .select('id')
       .in('role', ['farmer', 'admin'])
 
     if (!staffUsers || staffUsers.length === 0) return
-
-    const shortId = orderId.slice(0, 8).toUpperCase()
-    const title = `🛒 มีออเดอร์ใหม่ #${shortId}`
-    const message = customerName
-      ? `ลูกค้า "${customerName}" สั่งซื้อ ยอด ฿${Number(totalAmount || 0).toLocaleString()}`
-      : `มีคำสั่งซื้อใหม่ ยอด ฿${Number(totalAmount || 0).toLocaleString()} รอยืนยันรอบปลูก`
 
     const inserts = staffUsers.map(s => ({
       user_id: s.id,
@@ -191,7 +206,31 @@ export async function notifyStaffNewOrder(orderId, totalAmount, customerName = '
 
     await supabase.from('notifications').insert(inserts)
   } catch (err) {
-    console.warn('Could not notify staff:', err)
+    console.warn('Could not notify staff via client fallback:', err)
+  }
+}
+
+/**
+ * แจ้งเตือน Farmer & Admin เมื่อลูกค้ายกเลิกออเดอร์
+ */
+export async function notifyStaffCancelOrder(orderId, reason = '') {
+  if (!orderId) return
+  const shortId = orderId.slice(0, 8).toUpperCase()
+  const title = `⚠️ ลูกค้ายกเลิกออเดอร์ #${shortId}`
+  const message = reason ? `เหตุผล: "${reason}"` : `ลูกค้ายกเลิกคำสั่งซื้อ #${shortId}`
+
+  try {
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('notify_staff', {
+      p_title: title,
+      p_message: message,
+      p_type: 'order_status',
+      p_order_id: orderId,
+    })
+    if (!rpcErr && rpcRes && rpcRes.success) {
+      return rpcRes
+    }
+  } catch (rpcErr) {
+    console.warn('RPC notify_staff for cancel failed:', rpcErr)
   }
 }
 
