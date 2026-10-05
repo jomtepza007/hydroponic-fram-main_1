@@ -201,23 +201,23 @@ export default function Cart() {
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
 
-      <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-28 w-full">
+      <main className="flex-1 max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-20 sm:py-24 lg:py-28 w-full">
         {/* Navigation back */}
         <Link
           to="/products"
-          className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-forest mb-6 transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-forest mb-4 sm:mb-6 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" /> เลือกซื้อสินค้าเพิ่มเติม
         </Link>
 
         {/* Page Title */}
-        <div className="flex items-center justify-between gap-3 mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 sm:mb-8">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-emerald-100/70 text-forest flex items-center justify-center">
-              <ShoppingCart className="w-6 h-6" />
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-emerald-100/70 text-forest flex items-center justify-center flex-shrink-0">
+              <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <h1 className="page-title text-2xl sm:text-3xl">ตะกร้าสินค้า</h1>
+              <h1 className="page-title text-xl sm:text-2xl lg:text-3xl">ตะกร้าสินค้า</h1>
               <p className="page-subtitle text-xs sm:text-sm">
                 เลือกผักไฮโดรโปนิกและอุปกรณ์ปลูกผัก รวมไว้ในที่เดียว
               </p>
@@ -227,7 +227,7 @@ export default function Cart() {
           {cart.length > 0 && (
             <button
               onClick={clearCart}
-              className="text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+              className="text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1 self-start sm:self-auto py-1"
             >
               <Trash2 className="w-3.5 h-3.5" /> ล้างตะกร้าทั้งหมด
             </button>
@@ -260,23 +260,23 @@ export default function Cart() {
             {/* 1. ส่วน: ผักไฮโดรโปนิก (พรีออเดอร์) */}
             {/* ==================================================== */}
             {vegItems.length > 0 && (
-              <div className="bg-white rounded-3xl border border-emerald-100/80 p-6 sm:p-8 shadow-sm">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 mb-6 border-b border-gray-100 gap-2">
+              <div className="bg-white rounded-2xl sm:rounded-3xl border border-emerald-100/80 p-4 sm:p-6 lg:p-8 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 mb-6 border-b border-gray-100 gap-3">
                   <div className="flex items-center gap-2.5">
-                    <span className="w-8 h-8 rounded-xl bg-green-100 text-green-700 flex items-center justify-center text-sm font-bold">
+                    <span className="w-9 h-9 rounded-xl bg-green-100 text-green-700 flex items-center justify-center text-base font-bold flex-shrink-0">
                       🥬
                     </span>
                     <div>
-                      <h2 className="text-lg font-bold text-forest-dark">
+                      <h2 className="text-base sm:text-lg font-bold text-forest-dark leading-tight">
                         ผักไฮโดรโปนิก (สั่งจองล่วงหน้า)
                       </h2>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-400 mt-0.5">
                         เลือกได้ครั้งละ 0.5 กก. · ปลูกสดใหม่ตามรอบการสั่ง
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
                     <span className="badge bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
                       รวม {vegTotalWeight} กก.
                     </span>
@@ -286,7 +286,7 @@ export default function Cart() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
                   {/* Vegetable Items List */}
                   <div className="lg:col-span-7 space-y-3.5">
                     {vegItems.map(item => {
@@ -295,87 +295,147 @@ export default function Cart() {
                       return (
                         <div
                           key={item.id}
-                          className="flex items-center gap-3.5 p-3.5 bg-gray-50/70 hover:bg-emerald-50/30 border border-gray-100 rounded-2xl transition-all"
+                          className="p-3.5 sm:p-4 bg-gray-50/70 hover:bg-emerald-50/30 border border-gray-200/80 rounded-2xl transition-all shadow-2xs"
                         >
-                          {/* Image */}
-                          <div className="w-16 h-16 rounded-xl overflow-hidden bg-white flex-shrink-0 flex items-center justify-center border border-gray-100 shadow-xs">
-                            {item.image_url ? (
-                              <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
-                            ) : (
-                              <Leaf className="w-7 h-7 text-primary-300" />
-                            )}
-                          </div>
-
-                          {/* Info */}
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-bold text-gray-800 text-sm sm:text-base truncate">
-                              {item.name}
-                            </h3>
-                            <p className="text-xs text-forest font-semibold">
-                              ฿{itemPrice.toLocaleString()} / {item.unit || 'กก.'}
-                            </p>
-                            {item.harvest_days && (
-                              <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5">
-                                <Clock className="w-3 h-3" /> ระยะเวลาปลูก {item.harvest_days} วัน
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Stepper with 0.5 kg increments */}
-                          <div className="flex items-center gap-1.5 flex-shrink-0 bg-white p-1 rounded-xl border border-gray-200 shadow-xs">
-                            <button
-                              type="button"
-                              onClick={() => handleVegQtyStep(item, -0.5)}
-                              className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-600 transition-colors"
-                              title="ลด 0.5 กก."
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </button>
-
-                            <div className="w-14 text-center">
-                              <span className="font-bold text-sm text-forest-dark">
-                                {item.qty}
-                              </span>
-                              <span className="text-[10px] text-gray-400 block leading-none">กก.</span>
+                          {/* Upper Content: Image + Name + Unit Price + Delete Button */}
+                          <div className="flex items-start sm:items-center gap-3 sm:gap-4">
+                            {/* Image */}
+                            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden bg-white flex-shrink-0 flex items-center justify-center border border-gray-100 shadow-xs">
+                              {item.image_url ? (
+                                <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Leaf className="w-7 h-7 text-primary-300" />
+                              )}
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => handleVegQtyStep(item, 0.5)}
-                              className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-forest flex items-center justify-center transition-colors font-bold"
-                              title="เพิ่ม 0.5 กก."
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </button>
+                            {/* Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-1.5">
+                                <h3 className="font-bold text-gray-800 text-sm sm:text-base truncate" title={item.name}>
+                                  {item.name}
+                                </h3>
+                                {/* Delete button on mobile (top right) */}
+                                <button
+                                  type="button"
+                                  onClick={() => removeFromCart(item.id)}
+                                  className="sm:hidden p-1.5 -mr-1.5 -mt-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                  title="ลบรายการนี้"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              <p className="text-xs sm:text-sm text-forest font-semibold mt-0.5 whitespace-nowrap">
+                                ฿{itemPrice.toLocaleString()} <span className="text-gray-400 font-normal">/ {item.unit || 'กก.'}</span>
+                              </p>
+
+                              {item.harvest_days && (
+                                <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                  <Clock className="w-3 h-3 flex-shrink-0" />
+                                  <span>ระยะเวลาปลูก {item.harvest_days} วัน</span>
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Desktop Controls (Stepper, Subtotal, Delete) */}
+                            <div className="hidden sm:flex items-center gap-4 flex-shrink-0">
+                              {/* Stepper with 0.5 kg increments */}
+                              <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => handleVegQtyStep(item, -0.5)}
+                                  className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-600 transition-colors"
+                                  title="ลด 0.5 กก."
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+
+                                <div className="w-14 text-center">
+                                  <span className="font-bold text-sm text-forest-dark">
+                                    {item.qty}
+                                  </span>
+                                  <span className="text-[10px] text-gray-400 block leading-none">กก.</span>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleVegQtyStep(item, 0.5)}
+                                  className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-forest flex items-center justify-center transition-colors font-bold"
+                                  title="เพิ่ม 0.5 กก."
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {/* Subtotal */}
+                              <div className="text-right w-20 flex-shrink-0">
+                                <p className="font-bold text-forest text-base">
+                                  ฿{itemSubtotal.toLocaleString()}
+                                </p>
+                              </div>
+
+                              {/* Desktop Delete button */}
+                              <button
+                                type="button"
+                                onClick={() => removeFromCart(item.id)}
+                                className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                title="ลบรายการนี้"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
 
-                          {/* Subtotal */}
-                          <div className="text-right w-20 flex-shrink-0">
-                            <p className="font-bold text-forest text-sm sm:text-base">
-                              ฿{itemSubtotal.toLocaleString()}
-                            </p>
-                          </div>
+                          {/* Mobile Controls Row (< sm screens) */}
+                          <div className="flex sm:hidden items-center justify-between mt-3 pt-2.5 border-t border-gray-200/60">
+                            {/* Stepper */}
+                            <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-2xs">
+                              <button
+                                type="button"
+                                onClick={() => handleVegQtyStep(item, -0.5)}
+                                className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 active:bg-gray-200 flex items-center justify-center text-gray-600 transition-colors"
+                                title="ลด 0.5 กก."
+                              >
+                                <Minus className="w-4 h-4" />
+                              </button>
 
-                          {/* Delete */}
-                          <button
-                            type="button"
-                            onClick={() => removeFromCart(item.id)}
-                            className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                            title="ลบรายการนี้"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                              <div className="min-w-[48px] px-1 text-center">
+                                <span className="font-bold text-sm text-forest-dark">
+                                  {item.qty}
+                                </span>
+                                <span className="text-[10px] text-gray-400 block leading-none">กก.</span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleVegQtyStep(item, 0.5)}
+                                className="w-8 h-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-forest flex items-center justify-center transition-colors font-bold"
+                                title="เพิ่ม 0.5 กก."
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* Mobile Subtotal */}
+                            <div className="text-right">
+                              <span className="text-[11px] text-gray-400 block leading-tight">ยอดรวม</span>
+                              <p className="font-bold text-forest text-base leading-tight">
+                                ฿{itemSubtotal.toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       )
                     })}
 
-                    <div className="flex justify-between items-center pt-2 px-2 text-xs text-gray-400">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1.5 pt-2 px-1 text-xs text-gray-400">
                       <span>💡 ปรับปริมาณได้ทีละ 0.5 กก. ตามความต้องการ</span>
                       <Link to="/products?category=vegetable" className="text-forest hover:underline font-medium">
                         + เลือกผักชนิดอื่นเพิ่ม
                       </Link>
                     </div>
                   </div>
+
 
                   {/* Pre-order Checkout Form */}
                   <div className="lg:col-span-5 bg-gradient-to-br from-emerald-50/50 to-teal-50/30 border border-emerald-100 rounded-2xl p-5 sm:p-6 space-y-4">
@@ -490,13 +550,13 @@ export default function Cart() {
                           </div>
 
                           {/* Legend ใต้หลอด */}
-                          <div className="flex justify-between text-[10px] text-gray-500 pt-0.5">
+                          <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10px] text-gray-500 pt-0.5">
                             <span className="flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+                              <span className="w-2 h-2 rounded-full bg-amber-500 inline-block flex-shrink-0" />
                               จองแล้ว {capacity.used}
                             </span>
                             <span className="flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-forest inline-block" />
+                              <span className="w-2 h-2 rounded-full bg-forest inline-block flex-shrink-0" />
                               ออเดอร์นี้ {totalSlotsNeeded}
                             </span>
                             <span className="font-bold text-forest">
@@ -565,13 +625,13 @@ export default function Cart() {
                       >
                         {submittingVeg ? (
                           <>
-                            <div className="spinner w-4 h-4" />
-                            กำลังส่งคำสั่งจอง...
+                            <div className="spinner w-4 h-4 flex-shrink-0" />
+                            <span>กำลังส่งคำสั่งจอง...</span>
                           </>
                         ) : (
                           <>
-                            <CheckCircle2 className="w-4 h-4" />
-                            ยืนยันการสั่งจองผัก (฿{vegTotalPrice.toLocaleString()})
+                            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                            <span className="truncate">ยืนยันการสั่งจองผัก (฿{vegTotalPrice.toLocaleString()})</span>
                           </>
                         )}
                       </button>
@@ -589,17 +649,17 @@ export default function Cart() {
             {/* 2. ส่วน: อุปกรณ์ปลูกผัก (ถ้ามีในตะกร้า) */}
             {/* ==================================================== */}
             {equipItems.length > 0 && (
-              <div className="bg-white rounded-3xl border border-blue-100/80 p-6 sm:p-8 shadow-sm">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 mb-6 border-b border-gray-100 gap-2">
+              <div className="bg-white rounded-2xl sm:rounded-3xl border border-blue-100/80 p-4 sm:p-6 lg:p-8 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 sm:pb-5 mb-5 sm:mb-6 border-b border-gray-100 gap-3">
                   <div className="flex items-center gap-2.5">
-                    <span className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-bold">
+                    <span className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-base font-bold flex-shrink-0">
                       🌱
                     </span>
                     <div>
-                      <h2 className="text-lg font-bold text-gray-800">
+                      <h2 className="text-base sm:text-lg font-bold text-gray-800 leading-tight">
                         อุปกรณ์ปลูกผัก (จัดส่งถึงบ้าน)
                       </h2>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-400 mt-0.5">
                         สินค้าพร้อมส่ง ตัดรอบจัดส่งภายใน 1-3 วัน
                       </p>
                     </div>
@@ -610,67 +670,137 @@ export default function Cart() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
                   {/* Equipment Items List */}
-                  <div className="lg:col-span-8 space-y-3">
+                  <div className="lg:col-span-8 space-y-3.5">
                     {equipItems.map(item => {
                       const itemPrice = Number(item.price_per_kg ?? item.price ?? 0)
+                      const itemSubtotal = Number(item.qty) * itemPrice
                       return (
-                      <div
-                        key={item.id}
-                        className="flex items-center gap-3.5 p-3.5 bg-gray-50/70 border border-gray-100 rounded-2xl"
-                      >
-                        <div className="w-14 h-14 rounded-xl overflow-hidden bg-white flex-shrink-0 flex items-center justify-center border border-gray-100">
-                          {item.image_url ? (
-                            <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
-                          ) : (
-                            <Leaf className="w-6 h-6 text-gray-300" />
-                          )}
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-gray-800 text-sm truncate">{item.name}</p>
-                          <p className="text-xs text-blue-600 font-medium">
-                            ฿{itemPrice.toLocaleString()} / {item.unit || 'ชิ้น'}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200">
-                          <button
-                            type="button"
-                            onClick={() => handleEquipQtyStep(item, -1)}
-                            className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-600"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="w-8 text-center text-sm font-bold text-gray-800">{item.qty}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleEquipQtyStep(item, 1)}
-                            className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 flex items-center justify-center"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        <p className="font-bold text-gray-800 text-sm w-20 text-right flex-shrink-0">
-                          ฿{(Number(item.qty) * itemPrice).toLocaleString()}
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => removeFromCart(item.id)}
-                          className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg"
+                        <div
+                          key={item.id}
+                          className="p-3.5 sm:p-4 bg-gray-50/70 hover:bg-blue-50/30 border border-gray-200/80 rounded-2xl transition-all shadow-2xs"
                         >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                          {/* Upper Content: Image + Info + Desktop Controls / Mobile Delete */}
+                          <div className="flex items-start sm:items-center gap-3 sm:gap-4">
+                            {/* Thumbnail */}
+                            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden bg-white flex-shrink-0 flex items-center justify-center border border-gray-100 shadow-xs">
+                              {item.image_url ? (
+                                <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Leaf className="w-6 h-6 text-gray-300" />
+                              )}
+                            </div>
+
+                            {/* Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-1.5">
+                                <p className="font-semibold text-gray-800 text-sm sm:text-base truncate" title={item.name}>
+                                  {item.name}
+                                </p>
+                                {/* Delete button on mobile (top right) */}
+                                <button
+                                  type="button"
+                                  onClick={() => removeFromCart(item.id)}
+                                  className="sm:hidden p-1.5 -mr-1.5 -mt-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                  title="ลบรายการนี้"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              <p className="text-xs sm:text-sm text-blue-600 font-semibold mt-0.5 whitespace-nowrap">
+                                ฿{itemPrice.toLocaleString()} <span className="text-gray-400 font-normal">/ {item.unit || 'ชิ้น'}</span>
+                              </p>
+                            </div>
+
+                            {/* Desktop Controls (Stepper, Subtotal, Delete) */}
+                            <div className="hidden sm:flex items-center gap-4 flex-shrink-0">
+                              {/* Desktop Stepper */}
+                              <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEquipQtyStep(item, -1)}
+                                  className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-600 transition-colors"
+                                  title="ลดจำนวน"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+                                <span className="w-10 text-center text-sm font-bold text-gray-800">{item.qty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleEquipQtyStep(item, 1)}
+                                  className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 flex items-center justify-center transition-colors font-bold"
+                                  title="เพิ่มจำนวน"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {/* Desktop Subtotal */}
+                              <div className="text-right w-20 flex-shrink-0">
+                                <p className="font-bold text-gray-800 text-base">
+                                  ฿{itemSubtotal.toLocaleString()}
+                                </p>
+                              </div>
+
+                              {/* Desktop Delete button */}
+                              <button
+                                type="button"
+                                onClick={() => removeFromCart(item.id)}
+                                className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                title="ลบรายการนี้"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Mobile Controls Row (< sm screens) */}
+                          <div className="flex sm:hidden items-center justify-between mt-3 pt-2.5 border-t border-gray-200/60">
+                            {/* Mobile Stepper */}
+                            <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-2xs">
+                              <button
+                                type="button"
+                                onClick={() => handleEquipQtyStep(item, -1)}
+                                className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-gray-100 active:bg-gray-200 flex items-center justify-center text-gray-600 transition-colors"
+                                title="ลดจำนวน"
+                              >
+                                <Minus className="w-4 h-4" />
+                              </button>
+
+                              <div className="min-w-[40px] px-1 text-center">
+                                <span className="font-bold text-sm text-gray-800">
+                                  {item.qty}
+                                </span>
+                                <span className="text-[10px] text-gray-400 block leading-none">{item.unit || 'ชิ้น'}</span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleEquipQtyStep(item, 1)}
+                                className="w-8 h-8 rounded-lg bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-700 flex items-center justify-center transition-colors font-bold"
+                                title="เพิ่มจำนวน"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* Mobile Subtotal */}
+                            <div className="text-right">
+                              <span className="text-[11px] text-gray-400 block leading-tight">ยอดรวม</span>
+                              <p className="font-bold text-gray-800 text-base leading-tight">
+                                ฿{itemSubtotal.toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
 
                   {/* Equipment Checkout Box */}
-                  <div className="lg:col-span-4 bg-gray-50 border border-gray-200/80 rounded-2xl p-5 flex flex-col justify-between">
+                  <div className="lg:col-span-4 bg-gray-50 border border-gray-200/80 rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
                     <div>
                       <h4 className="font-bold text-gray-800 text-sm mb-3 flex items-center gap-2">
                         <Truck className="w-4 h-4 text-blue-600" />
@@ -690,7 +820,7 @@ export default function Cart() {
                         <button
                           id="btn-proceed-equipment-checkout"
                           onClick={() => navigate('/equipment/checkout')}
-                          className="btn-primary w-full py-2.5 text-sm bg-blue-600 hover:bg-blue-700 border-none flex items-center justify-center gap-2"
+                          className="btn-primary w-full py-2.5 text-sm bg-blue-600 hover:bg-blue-700 border-none flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
                         >
                           ดำเนินการต่อ <ArrowRight className="w-4 h-4" />
                         </button>
