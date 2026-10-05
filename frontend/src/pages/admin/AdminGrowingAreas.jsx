@@ -25,13 +25,26 @@ export default function AdminGrowingAreas() {
       const [{ data: areasData }, { data: vegsData }, { data: cyclesData }] = await Promise.all([
         supabase.from('growing_areas').select('*, vegetable_types(name)').order('name'),
         supabase.from('vegetable_types').select('id, name').eq('category', 'vegetable').eq('is_active', true).order('name'),
-        supabase.from('planting_cycles').select('growing_area_id, slots_used, status').in('status', ['scheduled', 'seeding', 'growing']),
+        supabase.from('planting_cycles').select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date').in('status', ['scheduled', 'seeding', 'growing']),
       ])
       setAreas(areasData || [])
       setVegetables(vegsData || [])
       setCycles(cyclesData || [])
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
+  }
+
+  function isCycleActiveToday(c, today) {
+    if (c.status !== 'seeding' && c.status !== 'growing') return false
+    if (c.planting_start_date && c.planting_start_date > today) return false
+    if (c.expected_harvest_date && c.expected_harvest_date < today) return false
+    return true
+  }
+
+  function isCycleUpcoming(c, today) {
+    if (c.status === 'scheduled') return true
+    if (c.planting_start_date && c.planting_start_date > today) return true
+    return false
   }
 
   function openAdd() {
@@ -88,6 +101,8 @@ export default function AdminGrowingAreas() {
     load()
   }
 
+  const todayStr = new Date().toISOString().split('T')[0]
+
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
@@ -96,7 +111,7 @@ export default function AdminGrowingAreas() {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="page-title">จัดการพื้นที่ปลูก</h1>
-              <p className="page-subtitle">เพิ่มและจัดการโซนการปลูกผัก</p>
+              <p className="page-subtitle">เพิ่มและจัดการโซนการปลูกผัก กำหนดแปลงเฉพาะและแปลงรวม (Waterfall Model)</p>
             </div>
             <button id="btn-add-area" onClick={openAdd} className="btn-primary">
               <Plus className="w-4 h-4" /> เพิ่มพื้นที่
@@ -107,19 +122,27 @@ export default function AdminGrowingAreas() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {(() => {
               const totalSlotsAll = areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
-              const totalUsedSlotsAll = areas.reduce((sum, a) => {
-                const areaCycles = cycles.filter(c => c.growing_area_id === a.id)
-                const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
-                return sum + used
+              
+              // 1. คำนวณช่องปลูกที่กำลังปลูกจริง ณ วันนี้ (Active Today)
+              const totalTodayUsedSlots = areas.reduce((sum, a) => {
+                const areaActive = cycles.filter(c => c.growing_area_id === a.id && isCycleActiveToday(c, todayStr))
+                return sum + areaActive.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
               }, 0)
-              const overallOccupancyRate = totalSlotsAll > 0 ? Math.round((totalUsedSlotsAll / totalSlotsAll) * 100) : 0
+
+              // 2. คำนวณยอดจองล่วงหน้ารอลงแปลง (Upcoming Bookings)
+              const totalUpcomingSlots = areas.reduce((sum, a) => {
+                const areaUpcoming = cycles.filter(c => c.growing_area_id === a.id && isCycleUpcoming(c, todayStr))
+                return sum + areaUpcoming.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+              }, 0)
+
+              const overallOccupancyRate = totalSlotsAll > 0 ? Math.min(100, Math.round((totalTodayUsedSlots / totalSlotsAll) * 100)) : 0
               const activeAreasCount = areas.filter(a => a.is_active).length
 
               return [
                 { label: 'แปลงปลูกทั้งหมด', value: `${areas.length} แปลง`, sub: `เปิดใช้งาน ${activeAreasCount} แปลง`, color: 'text-forest' },
-                { label: 'ช่องปลูกรวมทั้งฟาร์ม', value: `${totalSlotsAll.toLocaleString()} ช่อง`, sub: 'ความจุสูงสุด', color: 'text-blue-600' },
-                { label: 'ช่องปลูกที่ใช้งานอยู่', value: `${totalUsedSlotsAll.toLocaleString()} ช่อง`, sub: `ว่าง ${Math.max(0, totalSlotsAll - totalUsedSlotsAll).toLocaleString()} ช่อง`, color: 'text-amber-600' },
-                { label: 'อัตราการใช้งานรวม', value: `${overallOccupancyRate}%`, sub: overallOccupancyRate >= 80 ? '⚠️ เริ่มหนาแน่น' : '✅ กำลังดี', color: overallOccupancyRate >= 80 ? 'text-rose-600' : 'text-forest font-black' },
+                { label: 'ช่องปลูกรวมทั้งฟาร์ม', value: `${totalSlotsAll.toLocaleString()} ช่อง`, sub: 'ความจุสูงสุดทางกายภาพ', color: 'text-blue-600' },
+                { label: 'กำลังปลูกจริงวันนี้', value: `${totalTodayUsedSlots.toLocaleString()} ช่อง`, sub: `ว่างพร้อมปลูก ${Math.max(0, totalSlotsAll - totalTodayUsedSlots).toLocaleString()} ช่อง`, color: 'text-amber-600' },
+                { label: 'อัตราการใช้งานวันนี้', value: `${overallOccupancyRate}%`, sub: `จองล่วงหน้า ${totalUpcomingSlots.toLocaleString()} ช่อง`, color: overallOccupancyRate >= 80 ? 'text-rose-600' : 'text-forest font-black' },
               ].map(s => (
                 <div key={s.label} className="card text-center">
                   <p className={`text-2xl lg:text-3xl font-bold ${s.color}`}>{s.value}</p>
@@ -136,19 +159,23 @@ export default function AdminGrowingAreas() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {areas.map(a => {
                 const areaCycles = cycles.filter(c => c.growing_area_id === a.id)
-                const slotsUsed = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+                const activeTodayCycles = areaCycles.filter(c => isCycleActiveToday(c, todayStr))
+                const upcomingCycles = areaCycles.filter(c => isCycleUpcoming(c, todayStr))
+
+                const slotsUsedToday = activeTodayCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+                const slotsUpcoming = upcomingCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
                 const totalSlots = Number(a.total_slots) || 100
-                const occupancy = Math.min(100, Math.round((slotsUsed / totalSlots) * 100))
-                const remainingSlots = Math.max(0, totalSlots - slotsUsed)
+                const occupancyToday = Math.min(100, Math.round((slotsUsedToday / totalSlots) * 100))
+                const remainingSlotsToday = Math.max(0, totalSlots - slotsUsedToday)
 
                 let statusColor = 'bg-emerald-500'
                 let badgeBg = 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 let statusLabel = 'ปกติ'
-                if (occupancy >= 90) {
+                if (occupancyToday >= 90) {
                   statusColor = 'bg-red-500'
                   badgeBg = 'bg-red-50 text-red-700 border-red-200'
                   statusLabel = 'วิกฤต 90%+'
-                } else if (occupancy >= 75) {
+                } else if (occupancyToday >= 75) {
                   statusColor = 'bg-amber-500'
                   badgeBg = 'bg-amber-50 text-amber-700 border-amber-200'
                   statusLabel = 'ใกล้เต็ม 75%+'
@@ -178,7 +205,7 @@ export default function AdminGrowingAreas() {
 
                     <div>
                       {/* Title & Zone */}
-                      <div className="flex items-center gap-3 mb-4 pr-14">
+                      <div className="flex items-center gap-3 mb-3 pr-14">
                         <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${a.is_active ? 'bg-primary-50' : 'bg-gray-100'}`}>
                           <MapPin className={`w-5 h-5 ${a.is_active ? 'text-forest' : 'text-gray-400'}`} />
                         </div>
@@ -193,15 +220,28 @@ export default function AdminGrowingAreas() {
                         </div>
                       </div>
 
+                      {/* Area Type Badge */}
+                      <div className="mb-3">
+                        {a.vegetable_types?.name ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-emerald-50 text-forest border border-emerald-200">
+                            🌱 แปลงเฉพาะ: {a.vegetable_types.name}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                            🌐 แปลงรวม (ปลูกได้ทุกผัก)
+                          </span>
+                        )}
+                      </div>
+
                       {/* Info lines */}
-                      <div className="space-y-2 text-xs mb-4">
+                      <div className="space-y-1.5 text-xs mb-4">
                         <div className="flex items-center justify-between text-gray-500">
-                          <span>ผักประจำแปลง:</span>
-                          <span className="font-medium text-gray-800">{a.vegetable_types?.name || 'แปลงทั่วไป (ทุกชนิด)'}</span>
+                          <span>กำลังปลูกวันนี้:</span>
+                          <span className="font-bold text-forest">{activeTodayCycles.length} รอบ ({slotsUsedToday} ช่อง)</span>
                         </div>
                         <div className="flex items-center justify-between text-gray-500">
-                          <span>รอบปลูกที่กำลังปลูก:</span>
-                          <span className="font-medium text-forest">{areaCycles.length} รอบ</span>
+                          <span>ยอดจองล่วงหน้า:</span>
+                          <span className="font-medium text-amber-600">{upcomingCycles.length} รอบ ({slotsUpcoming} ช่อง)</span>
                         </div>
                       </div>
                     </div>
@@ -209,12 +249,12 @@ export default function AdminGrowingAreas() {
                     {/* Occupancy Section (Progress Bar) */}
                     <div className="pt-3 border-t border-gray-100">
                       <div className="flex items-center justify-between text-xs mb-1.5">
-                        <span className="font-semibold text-gray-700">การใช้งานพื้นที่:</span>
+                        <span className="font-semibold text-gray-700">การใช้งานจริงวันนี้:</span>
                         <div className="flex items-center gap-1.5">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold border ${badgeBg}`}>
                             {statusLabel}
                           </span>
-                          <span className="font-bold text-gray-900 text-sm">{occupancy}%</span>
+                          <span className="font-bold text-gray-900 text-sm">{occupancyToday}%</span>
                         </div>
                       </div>
 
@@ -222,19 +262,18 @@ export default function AdminGrowingAreas() {
                       <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden mb-2">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${statusColor}`}
-                          style={{ width: `${occupancy}%` }}
+                          style={{ width: `${occupancyToday}%` }}
                         />
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-gray-400">
-                        <span>จองแล้ว <strong>{slotsUsed}</strong> / {totalSlots} ช่อง</span>
-                        <span>ว่าง <strong>{remainingSlots}</strong> ช่อง</span>
+                      <div className="flex items-center justify-between text-[11px] text-gray-500">
+                        <span>ปลูกจริง <strong>{slotsUsedToday}</strong> / {totalSlots} ช่อง</span>
+                        <span>ว่างวันนี้ <strong className="text-forest">{remainingSlotsToday}</strong> ช่อง</span>
                       </div>
                     </div>
                   </div>
                 )
               })}
-
 
               {/* Add new card */}
               <div
@@ -298,17 +337,20 @@ export default function AdminGrowingAreas() {
               </div>
 
               <div>
-                <label className="label">ผักที่ปลูกในแปลงนี้</label>
+                <label className="label">ประเภทแปลง / ผักประจำแปลง</label>
                 <select
                   value={form.vegetable_type_id}
                   onChange={e => setForm(s => ({ ...s, vegetable_type_id: e.target.value }))}
                   className="input"
                 >
-                  <option value="">— ยังไม่กำหนด —</option>
+                  <option value="">🌐 แปลงรวม (ปลูกได้ทุกผัก / รองรับส่วนเกิน)</option>
                   {vegetables.map(v => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
+                    <option key={v.id} value={v.id}>🌱 แปลงเฉพาะ: {v.name}</option>
                   ))}
                 </select>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  💡 เคล็ดลับ: หากเลือก "แปลงรวม" ระบบจะใช้เป็นพื้นที่ปลูกผักทั่วไป และรองรับส่วนเกินเมื่อแปลงเฉพาะของผักชนิดอื่นเต็ม
+                </p>
               </div>
 
               <div className="flex items-center gap-3">

@@ -9,7 +9,7 @@ import Footer from '../../components/layout/Footer'
 import { useCart } from '../../context/CartContext'
 import { useAuth } from '../../context/AuthContext'
 import { getMinPickupDate, formatDateTh } from '../../utils/dateUtils'
-import { checkFarmCapacity, createOrder } from '../../api/orders'
+import { checkCartCapacity, createOrder } from '../../api/orders'
 import { supabase } from '../../api/supabaseClient'
 import toast from 'react-hot-toast'
 
@@ -76,14 +76,8 @@ export default function Cart() {
     if (!pickupDate || vegItems.length === 0) return
     setCheckingCap(true)
     try {
-      const vegTypeIds = vegItems.map(i => i.id).filter(Boolean)
-      // ตรวจสอบความจุจากแปลงปลูกที่สร้างไว้ใน จัดการพื้นที่ปลูก (growing_areas)
-      const result = await checkFarmCapacity(
-        pickupDate,
-        totalSlotsNeeded,
-        maxHarvestDays,
-        vegTypeIds
-      )
+      // ตรวจสอบความจุจากแปลงปลูกที่สร้างไว้ใน จัดการพื้นที่ปลูก (growing_areas) แบบแยกผักเฉพาะและแปลงรวม Waterfall
+      const result = await checkCartCapacity(pickupDate, vegItems)
       setCapacity(result)
     } catch (err) {
       console.error('Capacity check error:', err)
@@ -121,7 +115,7 @@ export default function Cart() {
     }
 
     if (capacity && !capacity.canAccept) {
-      toast.error(`พื้นที่แปลงปลูก${capacity.areaName ? ' ' + capacity.areaName : ''} เต็มในวันที่เลือก กรุณาเลือกวันอื่น`)
+      toast.error(`ไม่สามารถสั่งจองได้: ${capacity.reason || 'พื้นที่แปลงปลูกไม่เพียงพอ'}`)
       return
     }
 
@@ -490,24 +484,54 @@ export default function Cart() {
                           <span>กำลังคำนวณ Slot ว่างจริงจากแปลงปลูก...</span>
                         </div>
                       ) : capacity ? (
-                        <div className="space-y-2 pt-1 border-t border-gray-100">
+                        <div className="space-y-2.5 pt-1 border-t border-gray-100">
                           {/* Alert สถานะ */}
-                          <div className={`p-2 rounded-lg flex items-center gap-2 ${capacity.canAccept ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                          <div className={`p-3 rounded-xl border flex items-start gap-2.5 ${capacity.canAccept ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'
                             }`}>
                             {capacity.canAccept ? (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                              <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
                             ) : (
-                              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                              <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                             )}
-                            <div className="text-[11px] leading-tight">
-                              <span className="font-bold">
+                            <div className="text-[11px] leading-relaxed flex-1">
+                              <p className="font-bold text-xs">
                                 {capacity.canAccept
                                   ? `แปลงปลูกมีพื้นที่เพียงพอ (เหลือ slot ปลูกได้ ${capacity.available} ช่อง)`
-                                  : `แปลงปลูกไม่เพียงพอ (เหลือ slot ปลูกได้ ${capacity.available} ช่อง แต่ต้องการ ${totalSlotsNeeded} ช่อง)`
+                                  : `ไม่สามารถสั่งจองได้: ${capacity.reason}`
                                 }
-                              </span>
+                              </p>
+                              {!capacity.canAccept && (
+                                <p className="text-[11px] text-red-600 mt-1 font-medium">
+                                  💡 แนะนำ: กรุณาปรับลดจำนวนผัก หรือเลือกวันรับสินค้าอื่นที่แปลงปลูกมีพื้นที่ว่าง
+                                </p>
+                              )}
                             </div>
                           </div>
+
+                          {/* สรุปแยกตามชนิดผัก / แปลงเฉพาะ vs แปลงรวม */}
+                          {capacity.itemBreakdown && capacity.itemBreakdown.length > 0 && (
+                            <div className="space-y-1.5 pt-0.5">
+                              {capacity.itemBreakdown.map((ib, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-[11px] bg-gray-50/90 px-2.5 py-1.5 rounded-lg border border-gray-150">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className={ib.canAccept ? 'text-forest font-semibold' : 'text-red-600 font-bold'}>
+                                      {ib.canAccept ? '✓' : '✗'} {ib.name}
+                                    </span>
+                                    <span className="text-[10px] text-gray-500">
+                                      ({ib.hasDedicated ? `แปลงเฉพาะ: ${ib.dedicatedAreaName}` : '🌐 ใช้แปลงรวม'})
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] flex-shrink-0 font-medium">
+                                    {ib.canAccept ? (
+                                      <span className="text-emerald-700 font-semibold">ใช้ {ib.slotsNeeded} ช่อง</span>
+                                    ) : (
+                                      <span className="text-red-600 font-bold">ขาดอีก {ib.shortage} ช่อง</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
 
                           {/* สรุป Slot การปลูกได้ทั้งหมด อ้างอิงจาก จัดการพื้นที่ปลูก */}
                           <div className="flex justify-between items-center text-[11px] text-gray-600">
@@ -521,8 +545,12 @@ export default function Cart() {
                           {capacity.areas && capacity.areas.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-0.5">
                               {capacity.areas.map(a => (
-                                <span key={a.id} className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-forest border border-emerald-200 font-medium">
-                                  📍 แปลง {a.name}{a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : ''}: {a.total_slots} ช่อง
+                                <span key={a.id} className={`text-[10px] px-2 py-0.5 rounded-md font-medium border ${
+                                  a.vegetable_type_id
+                                    ? 'bg-emerald-50 text-forest border-emerald-200'
+                                    : 'bg-blue-50 text-blue-800 border-blue-200'
+                                }`}>
+                                  {a.vegetable_type_id ? '🌱' : '🌐'} แปลง {a.name}{a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : ''}: {a.total_slots} ช่อง
                                 </span>
                               ))}
                             </div>
@@ -621,12 +649,21 @@ export default function Cart() {
                         type="button"
                         onClick={handleOrderVegetables}
                         disabled={submittingVeg || (capacity && !capacity.canAccept)}
-                        className="btn-primary w-full py-3 text-sm font-bold shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className={`w-full py-3.5 text-sm font-bold shadow-md transition-all flex items-center justify-center gap-2 rounded-xl ${
+                          capacity && !capacity.canAccept
+                            ? 'bg-rose-50 text-rose-700 border-2 border-rose-300 cursor-not-allowed opacity-90 shadow-none'
+                            : 'btn-primary hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed'
+                        }`}
                       >
                         {submittingVeg ? (
                           <>
                             <div className="spinner w-4 h-4 flex-shrink-0" />
                             <span>กำลังส่งคำสั่งจอง...</span>
+                          </>
+                        ) : capacity && !capacity.canAccept ? (
+                          <>
+                            <AlertTriangle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                            <span className="truncate">ไม่สามารถสั่งจองได้ (พื้นที่แปลงปลูกไม่พอ)</span>
                           </>
                         ) : (
                           <>

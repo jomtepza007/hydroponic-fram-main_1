@@ -74,7 +74,7 @@ export default function AdminDashboard() {
         getTopVegetables(5),
         supabase.from('growing_areas').select('*, vegetable_types(name)').order('name'),
         supabase.from('profiles').select('id, customer_type'),
-        supabase.from('planting_cycles').select('growing_area_id, slots_used, status').in('status', ['scheduled', 'seeding', 'growing']),
+        supabase.from('planting_cycles').select('growing_area_id, slots_used, status, planting_start_date, expected_harvest_date').in('status', ['scheduled', 'seeding', 'growing']),
       ])
 
       if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value || [])
@@ -122,10 +122,17 @@ export default function AdminDashboard() {
     }
   }).filter(d => d.value > 0)
 
-  // Growing Area Capacity calculations from actual active planting cycles
+  // Growing Area Capacity calculations from actual active planting cycles today
+  const todayStr = new Date().toISOString().split('T')[0]
   const totalCapacitySlots = growingAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
   const usedCapacitySlots = growingAreas.reduce((sum, a) => {
-    const areaCycles = plantingCycles.filter(c => c.growing_area_id === a.id)
+    const areaCycles = plantingCycles.filter(c => {
+      if (c.growing_area_id !== a.id) return false
+      if (c.status !== 'seeding' && c.status !== 'growing') return false
+      if (c.planting_start_date && c.planting_start_date > todayStr) return false
+      if (c.expected_harvest_date && c.expected_harvest_date < todayStr) return false
+      return true
+    })
     const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
     return sum + used
   }, 0)

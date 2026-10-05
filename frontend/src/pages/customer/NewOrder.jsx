@@ -72,7 +72,7 @@ export default function NewOrder() {
   async function handleSubmit(e) {
     e.preventDefault()
     if (!capacity?.canAccept) {
-      toast.error(`พื้นที่แปลงปลูก${capacity?.areaName ? ' ' + capacity.areaName : ''} เต็มในวันที่เลือก กรุณาเลือกวันอื่น`)
+      toast.error(`ไม่สามารถสั่งจองได้: ${capacity?.reason || 'พื้นที่แปลงปลูกไม่เพียงพอ กรุณาเลือกวันอื่น'}`)
       return
     }
 
@@ -275,22 +275,28 @@ export default function NewOrder() {
                   ) : capacity ? (
                     <div className="space-y-3">
                       {/* Alert Message */}
-                      <div className={`alert ${capacity.canAccept ? 'alert-success' : 'alert-danger'} p-3 rounded-xl flex items-start gap-2.5`}>
+                      <div className={`alert ${capacity.canAccept ? 'alert-success' : 'alert-danger'} p-3.5 rounded-xl flex items-start gap-2.5`}>
                         {capacity.canAccept
                           ? <CheckCircle2 className="w-5 h-5 text-forest flex-shrink-0 mt-0.5" />
-                          : <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                          : <AlertTriangle className="w-5 h-5 text-rose-500 flex-shrink-0 mt-0.5" />
                         }
-                        <div className="text-sm">
-                          <p className="font-semibold">
+                        <div className="text-sm flex-1">
+                          <p className="font-semibold text-xs sm:text-sm">
                             {capacity.canAccept
                               ? `แปลงปลูก ${capacity.areaName || ''} มีพื้นที่เพียงพอ (เหลือจริง ${capacity.available} ช่อง)`
-                              : `แปลงปลูก ${capacity.areaName || ''} ไม่เพียงพอ (เหลือ ${capacity.available} ช่อง แต่ต้องการ ${Math.ceil(quantity * (vegetable.slots_per_kg || 4))} ช่อง)`
+                              : `ไม่สามารถสั่งจองได้: ${capacity.reason}`
                             }
                           </p>
-                          <p className="text-xs opacity-80 mt-0.5">
-                            คำนวณหักลบจากออเดอร์จริงของลูกค้าที่มีรอบปลูกทับซ้อนช่วงนี้
-                            {capacity.activeOrdersCount > 0 && ` (${capacity.activeOrdersCount} ออเดอร์)`}
-                          </p>
+                          {!capacity.canAccept ? (
+                            <p className="text-xs text-rose-600 mt-1 font-medium">
+                              💡 แนะนำ: ปรับลดปริมาณ หรือเลือกวันรับสินค้าอื่นที่แปลงปลูกมีพื้นที่ว่าง
+                            </p>
+                          ) : (
+                            <p className="text-xs opacity-80 mt-0.5">
+                              คำนวณหักลบจากออเดอร์จริงของลูกค้าที่มีรอบปลูกทับซ้อนช่วงนี้
+                              {capacity.activeOrdersCount > 0 && ` (${capacity.activeOrdersCount} ออเดอร์)`}
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -377,13 +383,20 @@ export default function NewOrder() {
               <button
                 type="submit"
                 id="btn-confirm-order"
-                disabled={submitting || !capacity?.canAccept || !pickupDate}
-                className="btn-primary flex-1 py-3.5 flex items-center justify-center gap-2"
+                disabled={submitting || (capacity && !capacity.canAccept) || !pickupDate}
+                className={`flex-1 py-3.5 flex items-center justify-center gap-2 rounded-xl font-bold transition-all ${
+                  capacity && !capacity.canAccept
+                    ? 'bg-rose-50 text-rose-700 border-2 border-rose-300 cursor-not-allowed opacity-90 shadow-none'
+                    : 'btn-primary'
+                }`}
               >
-                {submitting
-                  ? <><div className="spinner w-4 h-4" /> กำลังส่งออเดอร์...</>
-                  : <><ShoppingBag className="w-5 h-5" /> ยืนยันการสั่งจองทันที</>
-                }
+                {submitting ? (
+                  <><div className="spinner w-4 h-4" /> กำลังส่งออเดอร์...</>
+                ) : capacity && !capacity.canAccept ? (
+                  <><AlertTriangle className="w-5 h-5 text-rose-600" /> ไม่สามารถสั่งจองได้ (พื้นที่ไม่พอ)</>
+                ) : (
+                  <><ShoppingBag className="w-5 h-5" /> ยืนยันการสั่งจองทันที</>
+                )}
               </button>
             </div>
           </form>

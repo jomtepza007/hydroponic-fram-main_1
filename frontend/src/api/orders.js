@@ -159,6 +159,33 @@ export async function createOrder(orderData, items) {
     total_amount: Math.round(validatedTotal * 100) / 100,
   }
 
+  // 2.5 ตรวจสอบความจุแปลงปลูกก่อนบันทึกออเดอร์ (Double defense)
+  if (orderData.pickup_date) {
+    const vegItems = validatedItems.filter(item => {
+      const dbVeg = dbItemsMap.get(item.vegetable_type_id)
+      return dbVeg?.category !== 'equipment'
+    }).map(item => {
+      const dbVeg = dbItemsMap.get(item.vegetable_type_id)
+      return {
+        id: item.vegetable_type_id,
+        name: dbVeg?.name || 'ผัก',
+        qty: item.quantity,
+        slots_required: item.slots_required,
+        slots_per_kg: dbVeg?.slots_per_kg || 4,
+        harvest_days: dbVeg?.harvest_days || 35,
+      }
+    })
+
+    if (vegItems.length > 0) {
+      const capCheck = await checkCartCapacity(orderData.pickup_date, vegItems)
+      if (capCheck && !capCheck.canAccept) {
+        throw new Error(
+          `ไม่สามารถสั่งซื้อได้เนื่องจาก: ${capCheck.reason || 'พื้นที่แปลงปลูกไม่เพียงพอสำหรับวันที่เลือก'}`
+        )
+      }
+    }
+  }
+
   // 3. สร้าง order
   const { data: order, error: orderError } = await supabase
     .from('orders')
@@ -771,14 +798,32 @@ export async function deleteOrderPhoto(order, photo) {
   return anySuccess
 }
 
-/** ตรวจสอบ capacity ของแปลงปลูกตามชนิดผักและการใช้งานจริงของออเดอร์ลูกค้า (อ้างอิงจาก จัดการพื้นที่ปลูก growing_areas) */
-export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays = 35, vegetableTypeId = null) {
-  const needed = Number(slotsNeeded) || 0
-  const days = Number(harvestDays) || 35
+/**
+ * ตรวจสอบ capacity ของแปลงปลูกสำหรับรายการผักในตะกร้าทั้งหมด (Waterfall Dedicated -> Shared Allocation)
+ * รองรับทั้งการตรวจสอบผักชนิดเดียวและหลายชนิดพร้อมกันแบบจำลองการจัดสรรจริง
+ * @param {string} pickupDate - วันที่เก็บเกี่ยว / รับสินค้า
+ * @param {Array} cartItems - รายการผัก [{ id, name, qty, slots_per_kg, slots_required, harvest_days }]
+ * @param {number} fallbackSlotsNeeded - จำนวน slot สำรอง (กรณีไม่ส่ง cartItems)
+ * @param {number} fallbackHarvestDays - จำนวนวันปลูกสำรอง
+ */
+export async function checkCartCapacity(pickupDate, cartItems = [], fallbackSlotsNeeded = 0, fallbackHarvestDays = 35) {
+  if (!pickupDate) {
+    return {
+      total: 0,
+      used: 0,
+      available: 0,
+      slotsNeeded: 0,
+      canAccept: false,
+      reason: 'กรุณาระบุวันที่รับสินค้า',
+      itemBreakdown: [],
+      areas: [],
+    }
+  }
 
-  const typeIds = Array.isArray(vegetableTypeId)
-    ? vegetableTypeId.filter(Boolean)
-    : vegetableTypeId ? [vegetableTypeId] : []
+  const items = Array.isArray(cartItems) ? cartItems.filter(Boolean) : []
+  const maxDays = items.length > 0
+    ? Math.max(...items.map(i => Number(i.harvest_days) || fallbackHarvestDays || 35))
+    : (Number(fallbackHarvestDays) || 35)
 
   // 1. ดึงข้อมูลแปลงปลูกที่ active ทั้งหมดจาก จัดการพื้นที่ปลูก (growing_areas)
   const { data: allActiveAreas, error: areasError } = await supabase
@@ -789,47 +834,46 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
 
   if (areasError) console.error('Error fetching growing_areas:', areasError)
 
-  let relevantAreas = []
+  const activeAreas = allActiveAreas || []
 
-  if (allActiveAreas && allActiveAreas.length > 0) {
-    if (typeIds.length > 0) {
-      // แปลงที่ผูกกับผักชนิดที่เลือกโดยเฉพาะ
-      const specific = allActiveAreas.filter(a => typeIds.includes(a.vegetable_type_id))
-      if (specific.length > 0) {
-        relevantAreas = specific
-      } else {
-        // ถ้าไม่มีแปลงเฉพาะของผักชนิดนี้ ให้ใช้แปลงทั่วไป (vegetable_type_id is null) หรือทุกแปลงที่ active
-        const general = allActiveAreas.filter(a => !a.vegetable_type_id)
-        relevantAreas = general.length > 0 ? general : allActiveAreas
+  // 2. จัดกลุ่มแปลงปลูก: แปลงเฉพาะ (Dedicated) และ แปลงรวม (Shared)
+  const dedicatedAreasMap = {} // vegId -> [areas]
+  const dedicatedCapMap = {}   // vegId -> number
+  const sharedAreas = []
+  let sharedCapacity = 0
+
+  activeAreas.forEach(a => {
+    const slots = Number(a.total_slots) || 0
+    if (a.vegetable_type_id) {
+      if (!dedicatedAreasMap[a.vegetable_type_id]) {
+        dedicatedAreasMap[a.vegetable_type_id] = []
+        dedicatedCapMap[a.vegetable_type_id] = 0
       }
+      dedicatedAreasMap[a.vegetable_type_id].push(a)
+      dedicatedCapMap[a.vegetable_type_id] += slots
     } else {
-      // ถ้าไม่ได้ระบุชนิดผัก ให้ใช้ทุกแปลงปลูกที่ active ใน จัดการพื้นที่ปลูก
-      relevantAreas = allActiveAreas
+      sharedAreas.push(a)
+      sharedCapacity += slots
     }
-  }
+  })
 
-  let totalSlots = 0
-  let areaName = ''
-
-  if (relevantAreas.length > 0) {
-    totalSlots = relevantAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
-    areaName = relevantAreas.map(a => a.name + (a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : '')).join(', ')
-  } else {
-    // กรณีที่ยังไม่ได้สร้างพื้นที่ปลูกใน จัดการพื้นที่ปลูก เลย ให้ fallback ไปที่ farm_settings
+  // Fallback กรณีที่ฟาร์มยังไม่ได้สร้างแปลงปลูกในระบบเลย ให้ดึงจาก farm_settings
+  if (activeAreas.length === 0) {
     const { data: settings } = await supabase
       .from('farm_settings')
       .select('total_slots')
       .single()
-    totalSlots = settings?.total_slots || 0
-    areaName = 'แปลงรวม'
+    const farmCap = Number(settings?.total_slots) || 0
+    sharedCapacity = farmCap
+    sharedAreas.push({ id: 'fallback', name: 'แปลงรวมฟาร์ม', total_slots: farmCap })
   }
 
   // คำนวณช่วงวันที่ผักออเดอร์นี้จะเติบโตในแปลง
   const targetEnd = new Date(pickupDate)
   const targetStart = new Date(targetEnd)
-  targetStart.setDate(targetStart.getDate() - days)
+  targetStart.setDate(targetStart.getDate() - maxDays)
 
-  // 3. ดึงออเดอร์ของลูกค้าทั้งหมดที่กำลังอยู่ในกระบวนการปลูก
+  // 3. ดึงออเดอร์ของลูกค้าทั้งหมดที่กำลังอยู่ในกระบวนการปลูกและทับซ้อนช่วงเวลานี้
   const { data: activeOrders, error: ordersError } = await supabase
     .from('orders')
     .select(`
@@ -841,9 +885,20 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
     `)
     .in('status', ['waiting_cycle', 'pending', 'confirmed', 'seeding', 'growing', 'ready'])
 
-  if (ordersError) throw ordersError
+  if (ordersError) console.error('Error fetching orders for capacity:', ordersError)
 
-  let usedSlots = 0
+  // 4. ดึงรอบปลูก standalone ที่ไม่ได้ผูกกับ order_item_id
+  const { data: standaloneCycles, error: cyclesError } = await supabase
+    .from('planting_cycles')
+    .select('slots_used, planting_start_date, expected_harvest_date, vegetable_type_id')
+    .is('order_item_id', null)
+    .not('status', 'in', '("done","cancelled")')
+
+  if (cyclesError) console.error('Error fetching cycles for capacity:', cyclesError)
+
+  // 5. จำลองการจัดสรร Waterfall สำหรับออเดอร์เดิมและรอบปลูกเดิมที่มีอยู่แล้ว
+  const dedicatedUsedMap = {}
+  let sharedUsed = 0
   let overlappingOrders = 0
 
   for (const order of activeOrders || []) {
@@ -852,66 +907,230 @@ export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays
     let orderOverlapped = false
 
     for (const item of order.order_items || []) {
-      // หากมีการระบุ typeIds ให้คำนวณเฉพาะออเดอร์ที่ปลูกผักในกลุ่มนี้
-      if (typeIds.length > 0 && item.vegetable_type_id && !typeIds.includes(item.vegetable_type_id)) {
-        continue
-      }
-
-      const itemDays = item.vegetable_types?.harvest_days || days || 35
+      const itemDays = Number(item.vegetable_types?.harvest_days) || maxDays || 35
       const itemStart = new Date(orderEnd)
       itemStart.setDate(itemStart.getDate() - itemDays)
 
-      // ตรวจสอบการทับซ้อนของช่วงเวลาปลูก (Interval Overlap)
       if (itemStart <= targetEnd && orderEnd >= targetStart) {
-        const itemSlots = Number(item.slots_required) ||
-          Math.ceil(Number(item.quantity) * (item.vegetable_types?.slots_per_kg || 4))
-        usedSlots += itemSlots
         orderOverlapped = true
+        const itemSlots = Number(item.slots_required) ||
+          Math.ceil(Number(item.quantity) * (Number(item.vegetable_types?.slots_per_kg) || 4))
+        const vId = item.vegetable_type_id
+        const dedCap = (vId && dedicatedCapMap[vId]) || 0
+
+        if (dedCap > 0) {
+          const curUsed = dedicatedUsedMap[vId] || 0
+          if (curUsed + itemSlots <= dedCap) {
+            dedicatedUsedMap[vId] = curUsed + itemSlots
+          } else {
+            const room = Math.max(0, dedCap - curUsed)
+            dedicatedUsedMap[vId] = dedCap
+            sharedUsed += (itemSlots - room)
+          }
+        } else {
+          sharedUsed += itemSlots
+        }
       }
     }
     if (orderOverlapped) overlappingOrders++
   }
 
-  // 4. รวมรอบปลูก standalone
-  let cycleQuery = supabase
-    .from('planting_cycles')
-    .select('slots_used, planting_start_date, expected_harvest_date, vegetable_type_id')
-    .is('order_item_id', null)
-    .not('status', 'in', '("done","cancelled")')
-
-  if (typeIds.length > 0) {
-    cycleQuery = cycleQuery.in('vegetable_type_id', typeIds)
-  }
-
-  const { data: standaloneCycles } = await cycleQuery
   for (const cycle of standaloneCycles || []) {
     if (!cycle.planting_start_date) continue
     const cStart = new Date(cycle.planting_start_date)
     const cEnd = cycle.expected_harvest_date
       ? new Date(cycle.expected_harvest_date)
-      : new Date(cStart.getTime() + days * 86400000)
+      : new Date(cStart.getTime() + maxDays * 86400000)
 
     if (cStart <= targetEnd && cEnd >= targetStart) {
-      usedSlots += Number(cycle.slots_used) || 0
+      const cycleSlots = Number(cycle.slots_used) || 0
+      const vId = cycle.vegetable_type_id
+      const dedCap = (vId && dedicatedCapMap[vId]) || 0
+
+      if (dedCap > 0) {
+        const curUsed = dedicatedUsedMap[vId] || 0
+        if (curUsed + cycleSlots <= dedCap) {
+          dedicatedUsedMap[vId] = curUsed + cycleSlots
+        } else {
+          const room = Math.max(0, dedCap - curUsed)
+          dedicatedUsedMap[vId] = dedCap
+          sharedUsed += (cycleSlots - room)
+        }
+      } else {
+        sharedUsed += cycleSlots
+      }
     }
   }
 
-  const available = Math.max(0, totalSlots - usedSlots)
-  const canAccept = totalSlots > 0 && available >= needed && available > 0
+  // 6. จำลองการจัดสรรสำหรับสินค้าใหม่ในตะกร้า (Cart Items)
+  const remainingDedicated = {}
+  Object.keys(dedicatedCapMap).forEach(vId => {
+    remainingDedicated[vId] = Math.max(0, (dedicatedCapMap[vId] || 0) - (dedicatedUsedMap[vId] || 0))
+  })
+  let remainingShared = Math.max(0, sharedCapacity - sharedUsed)
+
+  let overallCanAccept = true
+  const shortageReasons = []
+  const itemBreakdown = []
+  let totalSlotsNeeded = 0
+
+  if (items.length > 0) {
+    for (const item of items) {
+      const vId = item.id || item.vegetable_type_id
+      const needed = Number(item.slots_required) ||
+        Math.ceil(Number(item.qty || 1) * (Number(item.slots_per_kg) || 4))
+      totalSlotsNeeded += needed
+
+      let unallocated = needed
+      let fromDedicated = 0
+      let fromShared = 0
+
+      if (vId && (remainingDedicated[vId] || 0) > 0) {
+        fromDedicated = Math.min(unallocated, remainingDedicated[vId])
+        remainingDedicated[vId] -= fromDedicated
+        unallocated -= fromDedicated
+      }
+
+      if (unallocated > 0) {
+        if (remainingShared >= unallocated) {
+          fromShared = unallocated
+          remainingShared -= unallocated
+          unallocated = 0
+        } else {
+          fromShared = remainingShared
+          unallocated -= remainingShared
+          remainingShared = 0
+        }
+      }
+
+      const itemCanAccept = unallocated === 0
+      if (!itemCanAccept) {
+        overallCanAccept = false
+        shortageReasons.push(`${item.name || 'ผัก'}: พื้นที่แปลงปลูกไม่พอ (ต้องการ ${needed} ช่อง, ขาดอีก ${unallocated} ช่อง)`)
+      }
+
+      const dedAreas = (vId && dedicatedAreasMap[vId]) || []
+      const dedName = dedAreas.map(a => a.name + (a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : '')).join(', ')
+
+      itemBreakdown.push({
+        id: vId,
+        name: item.name || 'ผัก',
+        qty: item.qty || 1,
+        slotsNeeded: needed,
+        fromDedicated,
+        fromShared,
+        shortage: unallocated,
+        canAccept: itemCanAccept,
+        dedicatedAreaName: dedName,
+        hasDedicated: dedAreas.length > 0,
+        dedicatedTotal: dedAreas.reduce((s, a) => s + (Number(a.total_slots) || 0), 0),
+        dedicatedAvailBefore: Math.max(0, (dedicatedCapMap[vId] || 0) - (dedicatedUsedMap[vId] || 0)),
+      })
+    }
+  } else {
+    totalSlotsNeeded = Number(fallbackSlotsNeeded) || 0
+    if (totalSlotsNeeded > 0 && remainingShared < totalSlotsNeeded) {
+      overallCanAccept = false
+      shortageReasons.push(`พื้นที่แปลงปลูกไม่พอ (ต้องการ ${totalSlotsNeeded} ช่อง, ว่าง ${remainingShared} ช่อง)`)
+    }
+    remainingShared = Math.max(0, remainingShared - totalSlotsNeeded)
+  }
+
+  // 7. คำนวณสรุปความจุสำหรับแสดงผล
+  const targetItemVids = items.map(i => i.id || i.vegetable_type_id).filter(Boolean)
+  let relevantDedicatedCap = 0
+  let relevantDedicatedUsed = 0
+  let relevantDedicatedAvail = 0
+
+  if (targetItemVids.length > 0) {
+    targetItemVids.forEach(vId => {
+      relevantDedicatedCap += dedicatedCapMap[vId] || 0
+      relevantDedicatedUsed += dedicatedUsedMap[vId] || 0
+      relevantDedicatedAvail += Math.max(0, (dedicatedCapMap[vId] || 0) - (dedicatedUsedMap[vId] || 0))
+    })
+  } else {
+    Object.keys(dedicatedCapMap).forEach(vId => {
+      relevantDedicatedCap += dedicatedCapMap[vId] || 0
+      relevantDedicatedUsed += dedicatedUsedMap[vId] || 0
+      relevantDedicatedAvail += Math.max(0, (dedicatedCapMap[vId] || 0) - (dedicatedUsedMap[vId] || 0))
+    })
+  }
+
+  const initialAvailableShared = Math.max(0, sharedCapacity - sharedUsed)
+  const totalCapacity = relevantDedicatedCap + sharedCapacity
+  const totalUsed = relevantDedicatedUsed + sharedUsed
+  const totalAvailable = relevantDedicatedAvail + initialAvailableShared
+
+  const dedicatedAreaNames = []
+  targetItemVids.forEach(vId => {
+    const list = dedicatedAreasMap[vId] || []
+    list.forEach(a => {
+      const name = a.name + (a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : '')
+      if (!dedicatedAreaNames.includes(name)) dedicatedAreaNames.push(name)
+    })
+  })
+  const dedicatedAreaName = dedicatedAreaNames.join(', ')
+  const sharedAreaName = sharedAreas.map(a => a.name + (a.zone_code && a.zone_code !== a.name ? ` (${a.zone_code})` : '')).join(', ')
+
+  let areaDisplayName = 'แปลงปลูก'
+  if (dedicatedAreaName && sharedAreaName) {
+    areaDisplayName = `แปลงเฉพาะ (${dedicatedAreaName}) + แปลงรวม (${sharedAreaName})`
+  } else if (dedicatedAreaName) {
+    areaDisplayName = `แปลงเฉพาะ (${dedicatedAreaName})`
+  } else if (sharedAreaName) {
+    areaDisplayName = `แปลงรวม (${sharedAreaName})`
+  }
+
+  let reason = 'พื้นที่แปลงปลูกมีเพียงพอ'
+  if (totalCapacity === 0) {
+    reason = 'ยังไม่มีแปลงปลูกที่เปิดใช้งานสำหรับผักชนิดนี้'
+  } else if (totalAvailable <= 0) {
+    reason = 'พื้นที่แปลงปลูกเต็มแล้วในวันที่เลือก'
+  } else if (!overallCanAccept) {
+    reason = shortageReasons.join(', ')
+  }
+
+  const canAccept = totalCapacity > 0 && overallCanAccept && totalAvailable >= totalSlotsNeeded
 
   return {
-    total: totalSlots,
-    used: usedSlots,
-    available,
-    slotsNeeded: needed,
+    total: totalCapacity,
+    used: totalUsed,
+    available: totalAvailable,
+    slotsNeeded: totalSlotsNeeded,
     canAccept,
-    occupancyRate: totalSlots > 0 ? Math.min(100, Math.round((usedSlots / totalSlots) * 100)) : 100,
+    reason,
+    occupancyRate: totalCapacity > 0 ? Math.min(100, Math.round((totalUsed / totalCapacity) * 100)) : 100,
     activeOrdersCount: overlappingOrders,
     targetStartDate: targetStart.toISOString().split('T')[0],
     targetEndDate: pickupDate,
-    areaName: areaName || 'แปลงปลูก',
-    areas: relevantAreas,
+    itemBreakdown,
+    dedicatedCapacity: relevantDedicatedCap,
+    dedicatedUsed: relevantDedicatedUsed,
+    availableDedicated: relevantDedicatedAvail,
+    sharedCapacity,
+    sharedUsed,
+    availableShared: initialAvailableShared,
+    remainingSharedAfterCart: remainingShared,
+    hasDedicated: relevantDedicatedCap > 0,
+    hasShared: sharedCapacity > 0,
+    dedicatedAreaName,
+    sharedAreaName,
+    areaName: areaDisplayName,
+    areas: [...allActiveAreas],
   }
+}
+
+/** Wrapper เพื่อความเข้ากันได้ย้อนหลัง 100% กับฟังก์ชันเดิม */
+export async function checkFarmCapacity(pickupDate, slotsNeeded = 0, harvestDays = 35, vegetableTypeId = null) {
+  const items = vegetableTypeId
+    ? [{
+        id: Array.isArray(vegetableTypeId) ? vegetableTypeId[0] : vegetableTypeId,
+        slots_required: slotsNeeded,
+        harvest_days: harvestDays,
+        qty: 1,
+      }]
+    : []
+  return checkCartCapacity(pickupDate, items, slotsNeeded, harvestDays)
 }
 
 /** ดึงข้อมูลการใช้พื้นที่ปลูกจริงของฟาร์ม ณ วันนี้ (สำหรับ Dashboards) */

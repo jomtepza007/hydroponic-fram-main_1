@@ -52,7 +52,7 @@ export default function FarmerDashboard() {
           .then(({ data }) => data || []),
         supabase
           .from('planting_cycles')
-          .select('id, growing_area_id, slots_used, status')
+          .select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date')
           .in('status', ['scheduled', 'seeding', 'growing'])
           .then(({ data }) => data || []),
       ])
@@ -75,12 +75,19 @@ export default function FarmerDashboard() {
   const readyOrders = orders.filter(o => o.status === 'ready')
   const waitingCycleOrders = orders.filter(o => o.status === 'waiting_cycle')
 
-  // คำนวณความจุแปลงปลูกแต่ละโซนที่ใกล้เต็ม (>= 80% หรือ >= 90%)
+  // คำนวณความจุแปลงปลูกแต่ละโซนที่กำลังปลูกจริงวันนี้ที่ใกล้เต็ม (>= 80% หรือ >= 90%)
+  const todayStr = new Date().toISOString().split('T')[0]
   const capacityAlerts = growingAreas.map(area => {
-    const areaCycles = allActiveCycles.filter(c => c.growing_area_id === area.id)
+    const areaCycles = allActiveCycles.filter(c => {
+      if (c.growing_area_id !== area.id) return false
+      if (c.status !== 'seeding' && c.status !== 'growing') return false
+      if (c.planting_start_date && c.planting_start_date > todayStr) return false
+      if (c.expected_harvest_date && c.expected_harvest_date < todayStr) return false
+      return true
+    })
     const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
     const total = Number(area.total_slots) || 100
-    const rate = total > 0 ? Math.round((used / total) * 100) : 0
+    const rate = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
     return {
       ...area,
       used_slots: used,
