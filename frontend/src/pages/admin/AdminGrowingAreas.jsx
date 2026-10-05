@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { MapPin, Plus, Pencil, X, Trash2, Layers, AlertTriangle, CheckCircle, PieChart } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import { supabase } from '../../api/supabaseClient'
@@ -10,6 +11,7 @@ export default function AdminGrowingAreas() {
   const [areas, setAreas] = useState([])
   const [vegetables, setVegetables] = useState([])
   const [cycles, setCycles] = useState([])
+  const [farmMaxSlots, setFarmMaxSlots] = useState(0)
   const [loading, setLoading] = useState(true)
 
   const [showForm, setShowForm] = useState(false)
@@ -22,14 +24,16 @@ export default function AdminGrowingAreas() {
   async function load() {
     setLoading(true)
     try {
-      const [{ data: areasData }, { data: vegsData }, { data: cyclesData }] = await Promise.all([
+      const [{ data: areasData }, { data: vegsData }, { data: cyclesData }, { data: farmSettingsData }] = await Promise.all([
         supabase.from('growing_areas').select('*, vegetable_types(name)').order('name'),
         supabase.from('vegetable_types').select('id, name').eq('category', 'vegetable').eq('is_active', true).order('name'),
         supabase.from('planting_cycles').select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date').in('status', ['scheduled', 'seeding', 'growing']),
+        supabase.from('farm_settings').select('total_slots').single(),
       ])
       setAreas(areasData || [])
       setVegetables(vegsData || [])
       setCycles(cyclesData || [])
+      setFarmMaxSlots(Number(farmSettingsData?.total_slots) || 0)
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }
@@ -67,12 +71,36 @@ export default function AdminGrowingAreas() {
 
   async function handleSave(e) {
     e.preventDefault()
+    const inputSlots = Number(form.total_slots) || 0
+    if (inputSlots <= 0) {
+      toast.error('กรุณาระบุจำนวนช่องปลูกมากกว่า 0')
+      return
+    }
+
+    const currentTotal = areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
+    const otherAreasTotal = editTarget
+      ? currentTotal - (Number(editTarget.total_slots) || 0)
+      : currentTotal
+    const projectedTotal = otherAreasTotal + inputSlots
+
+    if (farmMaxSlots > 0 && projectedTotal > farmMaxSlots) {
+      const remainingQuota = Math.max(0, farmMaxSlots - otherAreasTotal)
+      toast.error(
+        `ไม่สามารถบันทึกได้: จำนวนช่องปลูกรวมทุกแปลง (${projectedTotal.toLocaleString()} ช่อง) จะเกินเพดานความจุสูงสุดของฟาร์ม (${farmMaxSlots.toLocaleString()} ช่อง) ${
+          remainingQuota > 0
+            ? `คุณสามารถระบุได้สูงสุด ${remainingQuota.toLocaleString()} ช่อง`
+            : 'โควต้าความจุฟาร์มเต็มแล้ว กรุณาขยายความจุใน "ตั้งค่าฟาร์ม" ก่อน'
+        }`
+      )
+      return
+    }
+
     setSaving(true)
     try {
       const payload = {
         name: form.name,
         zone_code: form.zone_code || null,
-        total_slots: Number(form.total_slots),
+        total_slots: inputSlots,
         vegetable_type_id: form.vegetable_type_id || null,
         is_active: form.is_active,
       }
@@ -118,6 +146,29 @@ export default function AdminGrowingAreas() {
             </button>
           </div>
 
+          {/* Alert Banner: When current areas exceed farm capacity ceiling */}
+          {farmMaxSlots > 0 && areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0) > farmMaxSlots && (
+            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-900 shadow-xs">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                <div className="text-xs">
+                  <p className="font-bold text-sm">
+                    ช่องปลูกรวมทุกแปลง ({areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0).toLocaleString()} ช่อง) เกินกว่าความจุสูงสุดที่กำหนดไว้ในตั้งค่าฟาร์ม ({farmMaxSlots.toLocaleString()} ช่อง)
+                  </p>
+                  <p className="text-amber-700 mt-0.5">
+                    เกินเพดานอยู่ {areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0) - farmMaxSlots} ช่อง สามารถไปที่เมนู "ตั้งค่าฟาร์ม" เพื่อขยายความจุสูงสุดของฟาร์มได้
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/admin/farm-settings"
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1 shadow-2xs self-end sm:self-center"
+              >
+                ขยายความจุในตั้งค่าฟาร์ม ⚙️
+              </Link>
+            </div>
+          )}
+
           {/* Summary Stat Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {(() => {
@@ -140,7 +191,16 @@ export default function AdminGrowingAreas() {
 
               return [
                 { label: 'แปลงปลูกทั้งหมด', value: `${areas.length} แปลง`, sub: `เปิดใช้งาน ${activeAreasCount} แปลง`, color: 'text-forest' },
-                { label: 'ช่องปลูกรวมทั้งฟาร์ม', value: `${totalSlotsAll.toLocaleString()} ช่อง`, sub: 'ความจุสูงสุดทางกายภาพ', color: 'text-blue-600' },
+                {
+                  label: 'ช่องปลูกรวมทั้งฟาร์ม',
+                  value: farmMaxSlots > 0 ? `${totalSlotsAll.toLocaleString()} / ${farmMaxSlots.toLocaleString()} ช่อง` : `${totalSlotsAll.toLocaleString()} ช่อง`,
+                  sub: farmMaxSlots > 0
+                    ? (totalSlotsAll > farmMaxSlots
+                        ? `⚠️ เกินเพดานฟาร์ม ${totalSlotsAll - farmMaxSlots} ช่อง`
+                        : `โควต้าคงเหลือ ${Math.max(0, farmMaxSlots - totalSlotsAll).toLocaleString()} ช่อง`)
+                    : 'ความจุสูงสุดทางกายภาพ',
+                  color: totalSlotsAll > farmMaxSlots ? 'text-amber-600 font-bold' : 'text-blue-600'
+                },
                 { label: 'กำลังปลูกจริงวันนี้', value: `${totalTodayUsedSlots.toLocaleString()} ช่อง`, sub: `ว่างพร้อมปลูก ${Math.max(0, totalSlotsAll - totalTodayUsedSlots).toLocaleString()} ช่อง`, color: 'text-amber-600' },
                 { label: 'อัตราการใช้งานวันนี้', value: `${overallOccupancyRate}%`, sub: `จองล่วงหน้า ${totalUpcomingSlots.toLocaleString()} ช่อง`, color: overallOccupancyRate >= 80 ? 'text-rose-600' : 'text-forest font-black' },
               ].map(s => (
@@ -333,6 +393,18 @@ export default function AdminGrowingAreas() {
                     onChange={e => setForm(s => ({ ...s, total_slots: e.target.value }))}
                     className="input"
                   />
+                  {farmMaxSlots > 0 && (
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      โควต้าสูงสุดที่กำหนดได้:{' '}
+                      <strong className="text-forest font-bold">
+                        {Math.max(
+                          0,
+                          farmMaxSlots - (areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0) - (editTarget ? Number(editTarget.total_slots) || 0 : 0))
+                        ).toLocaleString()}{' '}
+                        ช่อง
+                      </strong>
+                    </p>
+                  )}
                 </div>
               </div>
 
