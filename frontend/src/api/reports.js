@@ -56,21 +56,44 @@ export async function getTopVegetables(limit = 10) {
 export async function getFarmSettings() {
   const { data, error } = await supabase
     .from('farm_settings')
-    .select('*')
+    .select('*, profiles:updated_by (full_name, email)')
     .single()
-  if (error) throw error
+  if (error) {
+    // Fallback if profiles foreign key relation has issue
+    const { data: fallbackData, error: fallbackError } = await supabase
+      .from('farm_settings')
+      .select('*')
+      .single()
+    if (fallbackError) throw fallbackError
+    return fallbackData
+  }
   return data
 }
 
 /** Admin: อัปเดต Farm Settings */
-export async function updateFarmSettings(updates) {
-  const { id, ...fields } = updates
+export async function updateFarmSettings(updates, userId = null) {
+  const { id, profiles, ...fields } = updates
+  const payload = {
+    ...fields,
+    updated_at: new Date().toISOString(),
+    ...(userId ? { updated_by: userId } : {}),
+  }
   const { data, error } = await supabase
     .from('farm_settings')
-    .update({ ...fields, updated_at: new Date().toISOString() })
+    .update(payload)
     .eq('id', id)
-    .select()
+    .select('*, profiles:updated_by (full_name, email)')
     .single()
-  if (error) throw error
+  if (error) {
+    // Fallback simple update if relation select issues
+    const { data: fbData, error: fbError } = await supabase
+      .from('farm_settings')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single()
+    if (fbError) throw fbError
+    return fbData
+  }
   return data
 }

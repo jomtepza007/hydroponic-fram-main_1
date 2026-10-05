@@ -78,8 +78,7 @@ export default function FarmerDashboard() {
   // คำนวณความจุแปลงปลูกแต่ละโซนที่ใกล้เต็ม (>= 80% หรือ >= 90%)
   const capacityAlerts = growingAreas.map(area => {
     const areaCycles = allActiveCycles.filter(c => c.growing_area_id === area.id)
-    const calculatedSlots = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
-    const used = Math.max(calculatedSlots, Number(area.current_slots_used) || 0)
+    const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
     const total = Number(area.total_slots) || 100
     const rate = total > 0 ? Math.round((used / total) * 100) : 0
     return {

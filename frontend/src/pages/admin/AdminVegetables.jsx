@@ -8,7 +8,7 @@ import toast from 'react-hot-toast'
 
 const EMPTY_FORM = {
   name: '', description: '', price_per_kg: '', unit: 'กก.',
-  harvest_days: 30, germination_days: 7, transfer_days: 14,
+  harvest_days: 30, germination_days: 7,
   slots_per_kg: 4, category: 'vegetable', image_url: '', is_active: true,
   resource_id: null,
 }
@@ -59,7 +59,6 @@ export default function AdminVegetables() {
       unit: veg.unit || 'กก.',
       harvest_days: veg.harvest_days || 30,
       germination_days: veg.germination_days || 7,
-      transfer_days: veg.transfer_days || 14,
       slots_per_kg: veg.slots_per_kg || 4,
       category: veg.category || 'vegetable',
       image_url: veg.image_url || '',
@@ -141,7 +140,6 @@ export default function AdminVegetables() {
         is_active: form.is_active !== undefined ? Boolean(form.is_active) : true,
         harvest_days: form.category === 'vegetable' ? (Number(form.harvest_days) || 30) : null,
         germination_days: form.category === 'vegetable' ? (Number(form.germination_days) || 7) : null,
-        transfer_days: form.category === 'vegetable' ? (Number(form.transfer_days) || 14) : null,
         slots_per_kg: form.category === 'vegetable' ? (Number(form.slots_per_kg) || 4) : 0,
         resource_id: form.category === 'equipment' ? (form.resource_id || null) : null,
       }

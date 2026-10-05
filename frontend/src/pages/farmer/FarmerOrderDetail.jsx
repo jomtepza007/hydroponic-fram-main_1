@@ -139,9 +139,13 @@ export default function FarmerOrderDetail() {
             ?.flatMap(item => item.planting_cycles?.map(c => c.id) || [])
             .filter(Boolean)
           if (cycleIds.length > 0) {
+            const updatePayload = { status: cycleStatus }
+            if (cycleStatus === 'done' || nextStatus === 'ready' || nextStatus === 'completed') {
+              updatePayload.actual_harvest_date = new Date().toISOString().split('T')[0]
+            }
             await supabase
               .from('planting_cycles')
-              .update({ status: cycleStatus })
+              .update(updatePayload)
               .in('id', cycleIds)
           }
         }

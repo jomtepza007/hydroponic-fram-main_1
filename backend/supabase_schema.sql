@@ -73,7 +73,6 @@ CREATE TABLE IF NOT EXISTS vegetable_types (
   image_url         text,
   harvest_days      integer DEFAULT 35,
   germination_days  integer DEFAULT 7,
-  transfer_days     integer DEFAULT 14,
   price_per_kg      decimal(10,2) NOT NULL,
   unit              text NOT NULL DEFAULT 'กก.',
   slots_per_kg      integer DEFAULT 4,
@@ -109,9 +108,7 @@ CREATE TABLE IF NOT EXISTS growing_areas (
   name              text NOT NULL,
   zone_code         text,
   total_slots       integer DEFAULT 100,
-  farmer_id         uuid REFERENCES profiles(id),
   vegetable_type_id uuid REFERENCES vegetable_types(id) ON DELETE SET NULL,
-  hydro_system      text DEFAULT 'NFT',
   is_active         boolean NOT NULL DEFAULT true,
   created_at        timestamptz NOT NULL DEFAULT now()
 );
@@ -1060,8 +1057,6 @@ CREATE TRIGGER trg_notify_order_cancelled
 -- ============================================
 ALTER TABLE vegetable_types ADD COLUMN IF NOT EXISTS resource_id uuid REFERENCES resources(id) ON DELETE SET NULL;
 ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS vegetable_type_id uuid REFERENCES vegetable_types(id) ON DELETE SET NULL;
-ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS hydro_system text DEFAULT 'NFT';
-ALTER TABLE growing_areas ADD COLUMN IF NOT EXISTS current_slots_used integer DEFAULT 0;
 
 -- Migrations สำหรับระบบส่วนลดต่อรายการและประเภทลูกค้า
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS customer_type text DEFAULT 'ทั่วไป';

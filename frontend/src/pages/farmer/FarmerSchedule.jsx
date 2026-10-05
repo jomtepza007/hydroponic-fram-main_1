@@ -287,6 +287,11 @@ export default function FarmerSchedule() {
                               <p className="text-sm font-medium text-amber-600">
                                 {cycle.expected_harvest_date ? formatDateTh(cycle.expected_harvest_date) : '—'}
                               </p>
+                              {cycle.actual_harvest_date && (
+                                <p className="text-[11px] font-semibold text-emerald-600 mt-0.5">
+                                  เก็บเกี่ยวจริง: {formatDateTh(cycle.actual_harvest_date)}
+                                </p>
+                              )}
                             </div>
                             <div>
                               <p className="text-xs text-gray-400">วันรับสินค้า</p>

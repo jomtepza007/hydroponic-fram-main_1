@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Save } from 'lucide-react'
+import { Save, UserCheck, Clock } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import { getFarmSettings, updateFarmSettings } from '../../api/reports'
+import { useAuth } from '../../context/AuthContext'
+import { formatDateTh } from '../../utils/dateUtils'
 import toast from 'react-hot-toast'
 
 export default function AdminFarmSettings() {
+  const { user } = useAuth()
   const [settings, setSettings] = useState({ farm_name: '', total_slots: 0, description: '' })
   const [saving, setSaving] = useState(false)
 
@@ -16,7 +19,8 @@ export default function AdminFarmSettings() {
     e.preventDefault()
     setSaving(true)
     try {
-      await updateFarmSettings(settings)
+      const updated = await updateFarmSettings(settings, user?.id)
+      if (updated) setSettings(updated)
       toast.success('บันทึกการตั้งค่าสำเร็จ ✅')
     } catch { toast.error('เกิดข้อผิดพลาด') }
     finally { setSaving(false) }
@@ -71,6 +75,19 @@ export default function AdminFarmSettings() {
             <button type="submit" disabled={saving} id="btn-save-settings" className="btn-primary w-full">
               {saving ? <><div className="spinner w-4 h-4" /> กำลังบันทึก...</> : <><Save className="w-4 h-4" /> บันทึกการตั้งค่า</>}
             </button>
+
+            {settings.updated_at && (
+              <div className="flex items-center justify-between text-xs text-gray-400 pt-2 border-t border-gray-100">
+                <span className="flex items-center gap-1.5">
+                  <UserCheck className="w-3.5 h-3.5 text-forest" />
+                  แก้ไขล่าสุดโดย: <strong className="text-gray-700 font-semibold">{settings.profiles?.full_name || settings.profiles?.email || 'ผู้ดูแลระบบ'}</strong>
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  {formatDateTh(settings.updated_at, 'd MMMM yyyy HH:mm')}
+                </span>
+              </div>
+            )}
           </form>
         </div>
       </main>

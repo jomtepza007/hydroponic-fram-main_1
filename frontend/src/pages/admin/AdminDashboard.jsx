@@ -126,7 +126,7 @@ export default function AdminDashboard() {
   const totalCapacitySlots = growingAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
   const usedCapacitySlots = growingAreas.reduce((sum, a) => {
     const areaCycles = plantingCycles.filter(c => c.growing_area_id === a.id)
-    const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0) || Number(a.current_slots_used) || 0
+    const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
     return sum + used
   }, 0)
   const farmOccupancyRate = totalCapacitySlots > 0
@@ -668,7 +668,7 @@ export default function AdminDashboard() {
                       {growingAreas.map(a => {
                         const aTotal = Number(a.total_slots) || 0
                         const aCycles = plantingCycles.filter(c => c.growing_area_id === a.id)
-                        const aUsed = aCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0) || Number(a.current_slots_used) || 0
+                        const aUsed = aCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
                         const aOccupancy = aTotal > 0 ? Math.min(100, Math.round((aUsed / aTotal) * 100)) : 0
 
                         return (

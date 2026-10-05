@@ -109,7 +109,7 @@ export default function AdminGrowingAreas() {
               const totalSlotsAll = areas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
               const totalUsedSlotsAll = areas.reduce((sum, a) => {
                 const areaCycles = cycles.filter(c => c.growing_area_id === a.id)
-                const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0) || Number(a.current_slots_used) || 0
+                const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
                 return sum + used
               }, 0)
               const overallOccupancyRate = totalSlotsAll > 0 ? Math.round((totalUsedSlotsAll / totalSlotsAll) * 100) : 0
@@ -136,7 +136,7 @@ export default function AdminGrowingAreas() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {areas.map(a => {
                 const areaCycles = cycles.filter(c => c.growing_area_id === a.id)
-                const slotsUsed = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0) || Number(a.current_slots_used) || 0
+                const slotsUsed = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
                 const totalSlots = Number(a.total_slots) || 100
                 const occupancy = Math.min(100, Math.round((slotsUsed / totalSlots) * 100))
                 const remainingSlots = Math.max(0, totalSlots - slotsUsed)
