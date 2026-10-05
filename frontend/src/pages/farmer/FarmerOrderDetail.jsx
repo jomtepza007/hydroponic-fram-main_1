@@ -4,7 +4,7 @@ import {
   ArrowLeft, Camera, CheckCircle2, User, Phone,
   Leaf, Calendar, Percent, Tag, History, Edit3,
   ChevronDown, ChevronUp, AlertCircle, X, XCircle, AlertTriangle,
-  Coins, Lock, Mail
+  Coins, Lock, Mail, Trash2, Maximize2, Eye
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import StatusTimeline from '../../components/orders/StatusTimeline'
@@ -13,10 +13,12 @@ import {
   getOrderById,
   updateOrderStatus,
   addPlantingUpdate,
+  deleteOrderPhoto,
   applyOrderItemDiscount,
   applyOrderDiscount,
   getOrderDiscountLogs
 } from '../../api/orders'
+
 import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
 import { notifyPlantingPhoto } from '../../api/notifications'
 import { supabase } from '../../api/supabaseClient'
@@ -31,7 +33,7 @@ import {
   getCustomerPhone,
 } from '../../utils/dateUtils'
 import { compressImageToDataUrl } from '../../utils/imageUtils'
-import { extractPhotosFromOrder, appendPhotoToOrderNotes, cleanOrderNotes } from '../../utils/orderPhotoUtils'
+import { extractPhotosFromOrder, appendPhotoToOrderNotes, removePhotoFromOrderNotes, cleanOrderNotes } from '../../utils/orderPhotoUtils'
 import toast from 'react-hot-toast'
 
 export default function FarmerOrderDetail() {
@@ -43,10 +45,21 @@ export default function FarmerOrderDetail() {
   const [caption, setCaption] = useState('')
   const [updating, setUpdating] = useState(false)
 
+  // จัดการรูปภาพ (Confirmation ก่อนส่ง, ลบรูป, Lightbox)
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState(null)
+  const [selectedPhotoPreview, setSelectedPhotoPreview] = useState(null)
+  const [confirmModalCaption, setConfirmModalCaption] = useState('')
+  const [showUploadConfirmModal, setShowUploadConfirmModal] = useState(false)
+  const [photoToDelete, setPhotoToDelete] = useState(null)
+  const [showDeletePhotoModal, setShowDeletePhotoModal] = useState(false)
+  const [deletingPhoto, setDeletingPhoto] = useState(false)
+  const [viewingPhoto, setViewingPhoto] = useState(null)
+
   // ยกเลิกคำสั่งซื้อโดยเกษตรกร
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelling, setCancelling] = useState(false)
+
 
   // ส่วนลดต่อรายการ (Discount states)
   const [discountInputs, setDiscountInputs] = useState({})
@@ -241,12 +254,48 @@ export default function FarmerOrderDetail() {
     }
   }
 
-  async function handlePhotoUpload(e) {
-    const file = e.target.files[0]
+  // เมื่อเลือกไฟล์รูปภาพ — แสดง modal ยืนยันก่อนส่งรูปเสมอ
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0]
     if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('กรุณาเลือกไฟล์รูปภาพเท่านั้น (PNG, JPG, WebP)')
+      if (e.target) e.target.value = ''
+      return
+    }
+
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('ขนาดไฟล์ใหญ่เกินไป (ไม่เกิน 20 MB)')
+      if (e.target) e.target.value = ''
+      return
+    }
+
+    const previewUrl = URL.createObjectURL(file)
+    setSelectedPhotoFile(file)
+    setSelectedPhotoPreview(previewUrl)
+    setConfirmModalCaption(caption || '')
+    setShowUploadConfirmModal(true)
+    if (e.target) e.target.value = ''
+  }
+
+  function handleCancelUploadModal() {
+    if (uploading) return
+    if (selectedPhotoPreview) {
+      URL.revokeObjectURL(selectedPhotoPreview)
+    }
+    setSelectedPhotoFile(null)
+    setSelectedPhotoPreview(null)
+    setShowUploadConfirmModal(false)
+  }
+
+  // กดยืนยันส่งรูปภาพให้ลูกค้าใน Modal
+  async function handleConfirmUploadPhoto() {
+    if (!selectedPhotoFile || !order?.id) return
     setUploading(true)
 
     try {
+      const file = selectedPhotoFile
       // 1. บีบอัดรูปภาพเป็น Base64 Data URL ที่มีคุณภาพสูงและขนาดกะทัดรัด (~30KB-50KB)
       let photoUrl = await compressImageToDataUrl(file, 900, 0.75)
       const fileName = `${id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`
@@ -267,11 +316,11 @@ export default function FarmerOrderDetail() {
         console.warn('Storage bucket not accessible, using compressed data URL', err)
       }
 
-      const photoCaption = caption || `อัปเดตสถานะ: ${labels[order.status] || order.status} (${formatDateTh(new Date())})`
+      const finalCaption = confirmModalCaption.trim() || caption.trim() || `อัปเดตสถานะ: ${labels[order.status] || order.status} (${formatDateTh(new Date())})`
       const photoObj = {
         id: `p_${Date.now()}`,
         photo_url: photoUrl,
-        caption: photoCaption,
+        caption: finalCaption,
         status: order.status,
         created_at: new Date().toISOString(),
         updated_by: user?.id || null,
@@ -318,7 +367,7 @@ export default function FarmerOrderDetail() {
           await addPlantingUpdate(plantingCycleId, {
             status: order.status,
             photo_url: photoUrl,
-            caption: photoCaption,
+            caption: finalCaption,
             updated_by: user?.id || null,
           })
         }
@@ -329,23 +378,50 @@ export default function FarmerOrderDetail() {
       // 5. ส่งการแจ้งเตือนไปยังลูกค้าเมื่อมีรูปภาพการปลูกใหม่
       try {
         if (order?.customer_id) {
-          await notifyPlantingPhoto(order.id, order.customer_id, photoCaption)
+          await notifyPlantingPhoto(order.id, order.customer_id, finalCaption)
         }
       } catch (notifErr) {
         console.warn('Could not send planting photo notification:', notifErr)
       }
 
-      toast.success('อัปโหลดรูปภาพสำเร็จ 📸')
+      toast.success('ส่งรูปภาพให้ลูกค้าเรียบร้อยแล้ว 📸')
       setCaption('')
+      setConfirmModalCaption('')
+      if (selectedPhotoPreview) URL.revokeObjectURL(selectedPhotoPreview)
+      setSelectedPhotoFile(null)
+      setSelectedPhotoPreview(null)
+      setShowUploadConfirmModal(false)
       await loadOrder()
     } catch (err) {
       toast.error('อัปโหลดล้มเหลว กรุณาลองใหม่อีกครั้ง')
       console.error(err)
     } finally {
       setUploading(false)
-      if (e.target) e.target.value = ''
     }
   }
+
+  // ยืนยันลบรูปภาพ (Admin / Farmer)
+  async function handleConfirmDeletePhoto() {
+    if (!photoToDelete || !order?.id) return
+    setDeletingPhoto(true)
+
+    try {
+      await deleteOrderPhoto(order, photoToDelete)
+      toast.success('ลบรูปภาพเรียบร้อยแล้ว 🗑️')
+      setShowDeletePhotoModal(false)
+      if (viewingPhoto && (viewingPhoto.id === photoToDelete.id || viewingPhoto.photo_url === photoToDelete.photo_url)) {
+        setViewingPhoto(null)
+      }
+      setPhotoToDelete(null)
+      await loadOrder()
+    } catch (err) {
+      console.error('Delete photo error:', err)
+      toast.error('เกิดข้อผิดพลาดในการลบรูปภาพ')
+    } finally {
+      setDeletingPhoto(false)
+    }
+  }
+
 
   if (loading) return (
     <div className="flex min-h-screen bg-background">
@@ -1178,13 +1254,20 @@ export default function FarmerOrderDetail() {
 
             {/* Upload Photo */}
             <div className="card">
-              <h2 className="font-semibold text-forest-dark mb-4">
-                {isEquipment ? 'อัปโหลดรูปภาพสินค้า / หลักฐาน' : 'อัปโหลดรูปภาพการปลูก'}
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-semibold text-forest-dark flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-forest" />
+                  {isEquipment ? 'อัปโหลดรูปภาพสินค้า / หลักฐาน' : 'อัปโหลดรูปภาพการปลูก'}
+                </h2>
+                <span className="text-[11px] text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200/60 font-medium flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  มีระบบยืนยันก่อนส่ง
+                </span>
+              </div>
               <div className="space-y-3">
                 <input
                   type="text"
-                  placeholder="คำอธิบายรูปภาพ (ไม่บังคับ)"
+                  placeholder="คำอธิบายรูปภาพล่วงหน้า (ไม่บังคับ — ปรับแก้ในหน้าต่างยืนยันได้)"
                   value={caption}
                   onChange={e => setCaption(e.target.value)}
                   className="input text-sm"
@@ -1197,9 +1280,14 @@ export default function FarmerOrderDetail() {
                     <div className="spinner w-8 h-8" />
                   ) : (
                     <>
-                      <Camera className="w-8 h-8 text-primary-300" />
-                      <span className="text-sm text-gray-500 font-medium">คลิกเพื่อเลือกรูปภาพจากเครื่อง</span>
-                      <span className="text-xs text-gray-400">PNG, JPG, WebP</span>
+                      <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-forest">
+                        <Camera className="w-6 h-6 text-forest" />
+                      </div>
+                      <span className="text-sm text-gray-700 font-semibold">คลิกเพื่อเลือกรูปภาพจากเครื่อง</span>
+                      <span className="text-xs text-gray-400">รองรับ PNG, JPG, WebP (สูงสุด 20 MB)</span>
+                      <span className="text-[11px] text-emerald-700 font-medium bg-emerald-50/80 px-2 py-0.5 rounded-md mt-1">
+                        * รูปภาพจะยังไม่ถูกส่งทันที จะมีหน้าต่างให้ตรวจสอบและกดยืนยันก่อนเสมอ
+                      </span>
                     </>
                   )}
                   <input
@@ -1207,7 +1295,7 @@ export default function FarmerOrderDetail() {
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={handlePhotoUpload}
+                    onChange={handleFileSelect}
                     disabled={uploading}
                   />
                 </label>
@@ -1218,11 +1306,96 @@ export default function FarmerOrderDetail() {
           {/* Growth Photos */}
           {growthPhotos.length > 0 && (
             <div className="card mt-6">
-              <h2 className="font-semibold text-forest-dark mb-4">รูปภาพที่อัปโหลดแล้ว ({growthPhotos.length})</h2>
-              <div className="grid grid-cols-3 gap-3">
-                {growthPhotos.map(photo => (
-                  <div key={photo.id} className="rounded-xl overflow-hidden aspect-square border border-gray-100">
-                    <img src={photo.photo_url} alt={photo.caption} className="w-full h-full object-cover" />
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 text-forest flex items-center justify-center font-bold">
+                    <Camera className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-forest-dark leading-tight">
+                      รูปภาพที่ส่งให้ลูกค้าแล้ว ({growthPhotos.length})
+                    </h2>
+                    <p className="text-xs text-gray-400">
+                      แสดงในหน้าติดตามสถานะของลูกค้า • แอดมินและผู้จัดการฟาร์มสามารถลบรูปได้ตลอดเวลา
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full font-medium border border-emerald-100">
+                  ลูกค้ามองเห็นแล้ว
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {growthPhotos.map((photo, idx) => (
+                  <div
+                    key={photo.id || idx}
+                    className="group relative bg-white rounded-xl border border-gray-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col"
+                  >
+                    {/* Image Container with hover overlay */}
+                    <div
+                      className="relative aspect-4/3 w-full bg-gray-100 overflow-hidden cursor-pointer"
+                      onClick={() => setViewingPhoto(photo)}
+                      title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
+                    >
+                      <img
+                        src={photo.photo_url}
+                        alt={photo.caption || 'รูปภาพอัปเดต'}
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                      {/* Gradient overlay on hover */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-medium bg-black/60 backdrop-blur-xs text-white px-2 py-0.5 rounded-full">
+                            #{idx + 1}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[11px] text-white bg-black/60 backdrop-blur-xs px-2 py-1 rounded-lg">
+                            <Maximize2 className="w-3 h-3" /> ขยายรูป
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Photo Details & Delete action */}
+                    <div className="p-3 flex-1 flex flex-col justify-between gap-2 bg-white">
+                      <div>
+                        <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1">
+                          <span>{formatDateTh(photo.created_at)}</span>
+                          {photo.status && (
+                            <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-medium">
+                              {labels[photo.status] || photo.status}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-700 line-clamp-2 leading-relaxed" title={photo.caption}>
+                          {photo.caption || <span className="text-gray-400 italic">ไม่มีคำอธิบาย</span>}
+                        </p>
+                      </div>
+
+                      {/* Action buttons: View full & Delete photo */}
+                      <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setViewingPhoto(photo)}
+                          className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-forest transition-colors font-medium py-1 px-2 rounded-lg hover:bg-gray-50"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>ดูรูปเต็ม</span>
+                        </button>
+                        <button
+                          type="button"
+                          id={`btn-delete-photo-${idx}`}
+                          onClick={() => {
+                            setPhotoToDelete(photo)
+                            setShowDeletePhotoModal(true)
+                          }}
+                          className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 font-medium py-1 px-2.5 rounded-lg border border-red-200 transition-all shadow-2xs"
+                          title="ลบรูปภาพนี้ออกจากระบบ"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>ลบรูป</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1339,6 +1512,278 @@ export default function FarmerOrderDetail() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 1. Modal ยืนยันก่อนส่งรูปภาพให้ลูกค้า */}
+      {showUploadConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !uploading && handleCancelUploadModal()}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 animate-slide-up"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-forest/10 text-forest flex items-center justify-center">
+                  <Camera className="w-5 h-5 text-forest" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-800 text-base">ยืนยันการส่งรูปภาพให้กับลูกค้า</h3>
+                  <p className="text-xs text-gray-400">
+                    ออเดอร์ #{order.id.slice(0, 8).toUpperCase()} • {customerName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={handleCancelUploadModal}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                title="ปิด"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Photo Preview Container */}
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                รูปภาพที่เลือก:
+              </label>
+              <div className="relative rounded-xl overflow-hidden border border-gray-200 bg-gray-900 flex items-center justify-center max-h-64 aspect-video sm:aspect-16/10">
+                {selectedPhotoPreview && (
+                  <img
+                    src={selectedPhotoPreview}
+                    alt="Preview"
+                    className="max-h-64 w-full h-full object-contain"
+                  />
+                )}
+                {selectedPhotoFile && (
+                  <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/75 backdrop-blur-xs text-[11px] text-white font-mono">
+                    {selectedPhotoFile.name} ({(selectedPhotoFile.size / (1024 * 1024)).toFixed(2)} MB)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Caption Input */}
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                คำอธิบายรูปภาพ (ลูกค้าจะเห็นข้อความนี้):
+              </label>
+              <textarea
+                rows={2}
+                value={confirmModalCaption}
+                onChange={e => setConfirmModalCaption(e.target.value)}
+                placeholder={`เช่น อัปเดตสถานะ: ${labels[order.status] || order.status} (${formatDateTh(new Date())})`}
+                className="input text-sm w-full"
+                disabled={uploading}
+              />
+            </div>
+
+            {/* Confirmation notice */}
+            <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-semibold">ยืนยันเพื่อส่งมอบข้อมูล:</span> เมื่อกดยืนยัน รูปภาพและคำอธิบายจะถูกส่งไปยังหน้าติดตามออเดอร์ของลูกค้า <span className="font-bold text-emerald-900">({customerName})</span> และระบบจะส่งการแจ้งเตือนทันที
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={handleCancelUploadModal}
+                className="btn-outline text-sm px-4 py-2.5 rounded-xl text-gray-600 font-medium"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-send-photo"
+                disabled={uploading}
+                onClick={handleConfirmUploadPhoto}
+                className="px-5 py-2.5 rounded-xl bg-forest hover:bg-forest-dark text-white font-semibold text-sm flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {uploading ? (
+                  <>
+                    <div className="spinner w-4 h-4 border-white" />
+                    <span>กำลังอัปโหลดและส่งรูป...</span>
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-4 h-4" />
+                    <span>ยืนยันส่งรูปภาพ</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Modal ยืนยันการลบรูปภาพ */}
+      {showDeletePhotoModal && photoToDelete && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !deletingPhoto && setShowDeletePhotoModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 animate-slide-up"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2.5 text-red-600">
+                <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-800 text-base">ยืนยันการลบรูปภาพ</h3>
+                  <p className="text-xs text-gray-400">ออเดอร์ #{order.id.slice(0, 8).toUpperCase()}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={deletingPhoto}
+                onClick={() => setShowDeletePhotoModal(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                title="ปิด"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Thumbnail Preview */}
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100 mb-4">
+              <div className="w-16 h-16 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0 border border-gray-200">
+                <img
+                  src={photoToDelete.photo_url}
+                  alt={photoToDelete.caption || 'รูปภาพ'}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-gray-800 truncate">
+                  {photoToDelete.caption || 'ไม่มีคำอธิบาย'}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  วันที่: {formatDateTh(photoToDelete.created_at)}
+                </p>
+                {photoToDelete.status && (
+                  <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded bg-gray-200 text-gray-700 font-medium">
+                    สถานะ: {labels[photoToDelete.status] || photoToDelete.status}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl mb-5 text-xs text-red-700 leading-relaxed flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">คำเตือน:</span> เมื่อลบแล้ว รูปภาพนี้จะถูกลบออกจากระบบและลูกค้าจะไม่สามารถมองเห็นรูปนี้ในหน้าติดตามสถานะได้อีกต่อไป
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={deletingPhoto}
+                onClick={() => setShowDeletePhotoModal(false)}
+                className="btn-outline text-sm px-4 py-2 rounded-xl text-gray-600 font-medium"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-delete-photo"
+                disabled={deletingPhoto}
+                onClick={handleConfirmDeletePhoto}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
+              >
+                {deletingPhoto ? (
+                  <>
+                    <div className="spinner w-4 h-4 border-white" />
+                    <span>กำลังลบ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>ยืนยันลบรูปภาพ</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Lightbox / Zoom Photo Modal */}
+      {viewingPhoto && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setViewingPhoto(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200 flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Top Bar */}
+            <div className="p-3.5 bg-gray-900 text-white flex items-center justify-between border-b border-gray-800">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold px-2 py-0.5 bg-white/20 rounded-md">
+                  {labels[viewingPhoto.status] || viewingPhoto.status || 'อัปเดต'}
+                </span>
+                <span className="text-xs text-gray-300">
+                  {formatDateTh(viewingPhoto.created_at)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-lightbox-delete-photo"
+                  onClick={() => {
+                    setPhotoToDelete(viewingPhoto)
+                    setShowDeletePhotoModal(true)
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-xs font-medium transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>ลบรูปนี้</span>
+                </button>
+                <button
+                  onClick={() => setViewingPhoto(null)}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                  title="ปิด"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Photo display */}
+            <div className="relative bg-black flex items-center justify-center max-h-[70vh] min-h-[240px]">
+              <img
+                src={viewingPhoto.photo_url}
+                alt={viewingPhoto.caption || 'รูปภาพ'}
+                className="max-h-[70vh] w-auto max-w-full object-contain"
+              />
+            </div>
+
+            {/* Bottom Caption */}
+            {viewingPhoto.caption && (
+              <div className="p-4 bg-white border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-500 mb-0.5">คำอธิบาย:</p>
+                <p className="text-sm text-gray-800 leading-relaxed">{viewingPhoto.caption}</p>
+              </div>
+            )}
           </div>
         </div>
       )}

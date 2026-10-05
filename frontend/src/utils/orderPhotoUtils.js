@@ -113,3 +113,46 @@ export function cleanOrderNotes(notes = '') {
   if (!notes) return ''
   return notes.replace(PHOTO_REGEX_GLOBAL, '').trim()
 }
+
+/**
+ * ลบรูปภาพออกจาก order.notes
+ * @param {string} currentNotes - ข้อความ notes ในตาราง orders
+ * @param {object|string} photoIdentifier - photo object หรือ photo id หรือ photo url
+ * @returns {string} - ข้อความ notes ใหม่หลังตัดรูปภาพออก
+ */
+export function removePhotoFromOrderNotes(currentNotes = '', photoIdentifier) {
+  if (!currentNotes || !photoIdentifier) return currentNotes || ''
+
+  let existingPhotos = []
+  let baseNotes = currentNotes
+
+  const match = baseNotes.match(PHOTO_REGEX)
+  if (match && match[1]) {
+    try {
+      existingPhotos = JSON.parse(match[1])
+      if (!Array.isArray(existingPhotos)) existingPhotos = []
+    } catch {
+      existingPhotos = []
+    }
+    baseNotes = baseNotes.replace(PHOTO_REGEX, '').trim()
+  }
+
+  const targetId = typeof photoIdentifier === 'object' ? photoIdentifier?.id : photoIdentifier
+  const targetUrl = typeof photoIdentifier === 'object' ? photoIdentifier?.photo_url : photoIdentifier
+
+  const filteredPhotos = existingPhotos.filter(p => {
+    if (!p) return false
+    if (targetId && p.id && p.id === targetId) return false
+    if (targetUrl && p.photo_url && p.photo_url === targetUrl) return false
+    if (targetUrl && p.photo_url && (p.photo_url.slice(0, 100) === String(targetUrl).slice(0, 100))) return false
+    return true
+  })
+
+  if (filteredPhotos.length === 0) {
+    return baseNotes
+  }
+
+  const tag = `<!--PHOTOS:${JSON.stringify(filteredPhotos)}-->`
+  return baseNotes ? `${baseNotes}\n\n${tag}` : tag
+}
+

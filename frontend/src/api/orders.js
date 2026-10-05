@@ -4,6 +4,8 @@ import {
   notifyStaffNewOrder,
   notifyCustomerNewOrder,
 } from './notifications'
+import { removePhotoFromOrderNotes } from '../utils/orderPhotoUtils'
+
 
 /** Customer: ดูออเดอร์ของตัวเอง */
 export async function getMyOrders(customerId) {
@@ -717,6 +719,56 @@ export async function addPlantingUpdate(plantingCycleId, { status, photo_url, ca
     .single()
   if (error) throw error
   return data
+}
+
+/** Farmer/Admin: ลบรูปภาพอัปเดตของออเดอร์ (ลบทั้งจาก planting_updates, order.notes และ Supabase Storage) */
+export async function deleteOrderPhoto(order, photo) {
+  if (!order || !photo) return false
+
+  let anySuccess = false
+
+  // 1. ลบจาก planting_updates ถ้ามีในตาราง DB
+  try {
+    if (photo.id && !photo.id.startsWith('emb_') && !photo.id.startsWith('p_') && !photo.id.startsWith('upd_')) {
+      const { error: idErr } = await supabase.from('planting_updates').delete().eq('id', photo.id)
+      if (!idErr) anySuccess = true
+    }
+    if (photo.photo_url) {
+      const { error: urlErr } = await supabase.from('planting_updates').delete().eq('photo_url', photo.photo_url)
+      if (!urlErr) anySuccess = true
+    }
+  } catch (err) {
+    console.warn('Delete from planting_updates note:', err)
+  }
+
+  // 2. ลบออกจาก order.notes
+  try {
+    const updatedNotes = removePhotoFromOrderNotes(order.notes || '', photo)
+    const { error: noteErr } = await supabase
+      .from('orders')
+      .update({ notes: updatedNotes })
+      .eq('id', order.id)
+
+    if (noteErr) throw noteErr
+    anySuccess = true
+  } catch (err) {
+    console.error('Failed to update order notes after deleting photo:', err)
+    throw err
+  }
+
+  // 3. ลบออกจาก Supabase Storage (growth-photos bucket) ถ้าเป็นไฟล์ storage
+  try {
+    if (photo.photo_url && photo.photo_url.includes('growth-photos/')) {
+      const path = photo.photo_url.split('growth-photos/')[1]?.split('?')[0]
+      if (path) {
+        await supabase.storage.from('growth-photos').remove([decodeURIComponent(path)])
+      }
+    }
+  } catch (storageErr) {
+    console.warn('Delete from storage note:', storageErr)
+  }
+
+  return anySuccess
 }
 
 /** ตรวจสอบ capacity ของแปลงปลูกตามชนิดผักและการใช้งานจริงของออเดอร์ลูกค้า (อ้างอิงจาก จัดการพื้นที่ปลูก growing_areas) */
