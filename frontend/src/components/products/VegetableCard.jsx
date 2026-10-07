@@ -1,6 +1,7 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { Clock, Leaf, ShoppingCart } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
+import { useAuth } from '../../context/AuthContext'
 import toast from 'react-hot-toast'
 
 /**
@@ -9,10 +10,20 @@ import toast from 'react-hot-toast'
 export default function VegetableCard({ vegetable }) {
   const { id, name, description, image_url, price_per_kg, unit, harvest_days, category } = vegetable
   const { addToCart } = useCart()
+  const { isLoggedIn } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
 
   function handleQuickAdd(e) {
     e.preventDefault()
     e.stopPropagation()
+
+    if (!isLoggedIn) {
+      toast.error('กรุณาเข้าสู่ระบบก่อนเพิ่มสินค้าลงตะกร้า 🔒')
+      navigate('/login', { state: { from: location } })
+      return
+    }
+
     const qty = category === 'vegetable' ? 1.0 : 1
     addToCart(vegetable, qty)
     toast.success(`เพิ่ม ${name} ${qty} ${unit} ลงตะกร้าแล้ว 🌱`, { duration: 2500 })

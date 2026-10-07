@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { Leaf, ArrowLeft, ShieldCheck, Sparkles, Lock } from 'lucide-react'
 import { signInWithGoogle } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 export default function Login() {
   const { isLoggedIn, role } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [loading, setLoading] = useState(false)
 
   // redirect หลังล็อกอินแล้ว (รอให้ role โหลดเสร็จก่อน)
@@ -15,9 +16,12 @@ export default function Login() {
     if (isLoggedIn && role !== null) {
       if (role === 'admin') navigate('/admin')
       else if (role === 'farmer') navigate('/farmer')
-      else navigate('/')
+      else {
+        const from = location.state?.from?.pathname || location.state?.from || '/'
+        navigate(from, { replace: true })
+      }
     }
-  }, [isLoggedIn, role, navigate])
+  }, [isLoggedIn, role, navigate, location.state])
 
   async function handleGoogleLogin() {
     try {

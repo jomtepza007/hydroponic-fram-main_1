@@ -56,6 +56,9 @@ export function CartProvider({ children }) {
    * @param {number} [quantity] - ปริมาณที่ต้องการเพิ่ม (ถ้าไม่ระบุ ผัก=1 หรือ 0.5, อุปกรณ์=1)
    */
   function addToCart(product, quantity = null) {
+    if (!userId) {
+      return false
+    }
     const isVeg = product.category === 'vegetable'
     const defaultQty = isVeg ? 1 : 1
     const qtyToAdd = quantity !== null && Number(quantity) > 0 ? Number(quantity) : defaultQty

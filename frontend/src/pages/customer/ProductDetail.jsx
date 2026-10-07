@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { ArrowLeft, Clock, ShoppingBag, Leaf, Minus, Plus, ShoppingCart, Check, Calendar } from 'lucide-react'
 import Navbar from '../../components/layout/Navbar'
 import Footer from '../../components/layout/Footer'
@@ -12,6 +12,7 @@ export default function ProductDetail() {
   const { id } = useParams()
   const { isLoggedIn } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const { addToCart, cart } = useCart()
 
   const [vegetable, setVegetable] = useState(null)
@@ -76,6 +77,12 @@ export default function ProductDetail() {
   }
 
   function handleAddToCart() {
+    if (!isLoggedIn) {
+      toast.error('กรุณาเข้าสู่ระบบก่อนเพิ่มสินค้าลงตะกร้า 🔒')
+      navigate('/login', { state: { from: location } })
+      return
+    }
+
     addToCart(vegetable, quantity)
     toast.success(
       (t) => (
@@ -102,6 +109,12 @@ export default function ProductDetail() {
   }
 
   function handleBuyNow() {
+    if (!isLoggedIn) {
+      toast.error('กรุณาเข้าสู่ระบบก่อนดำเนินการสั่งซื้อ 🔒')
+      navigate('/login', { state: { from: location } })
+      return
+    }
+
     addToCart(vegetable, quantity)
     navigate('/cart')
   }

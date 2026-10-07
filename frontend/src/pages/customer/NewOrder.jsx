@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import {
   Clock, Leaf, ArrowLeft, ShoppingBag, Calendar,
   CheckCircle2, AlertTriangle, Minus, Plus, ShoppingCart
@@ -16,9 +16,10 @@ import toast from 'react-hot-toast'
 
 export default function NewOrder() {
   const { id } = useParams()
-  const { user } = useAuth()
+  const { user, isLoggedIn } = useAuth()
   const { addToCart } = useCart()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [vegetable, setVegetable] = useState(null)
   const [quantity, setQuantity] = useState(1)
@@ -370,6 +371,11 @@ export default function NewOrder() {
               <button
                 type="button"
                 onClick={() => {
+                  if (!isLoggedIn) {
+                    toast.error('กรุณาเข้าสู่ระบบก่อนเพิ่มสินค้าลงตะกร้า 🔒')
+                    navigate('/login', { state: { from: location } })
+                    return
+                  }
                   addToCart(vegetable, quantity)
                   toast.success(`เพิ่ม ${vegetable.name} ${quantity} ${vegetable.unit} ลงตะกร้าแล้ว 🌱`)
                   navigate('/cart')
