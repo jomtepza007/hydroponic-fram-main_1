@@ -43,6 +43,19 @@ const STATUS_LABELS = {
   cancelled: 'ยกเลิก',
 }
 
+function isCycleActiveToday(c, today) {
+  if (c.status !== 'seeding' && c.status !== 'growing') return false
+  if (c.planting_start_date && c.planting_start_date > today) return false
+  if (c.expected_harvest_date && c.expected_harvest_date < today) return false
+  return true
+}
+
+function isCycleUpcoming(c, today) {
+  if (c.status === 'scheduled') return true
+  if (c.planting_start_date && c.planting_start_date > today) return true
+  return false
+}
+
 export default function AdminDashboard() {
   const [orders, setOrders] = useState([])
   const [resources, setResources] = useState([])
@@ -126,15 +139,12 @@ export default function AdminDashboard() {
   const todayStr = new Date().toISOString().split('T')[0]
   const totalCapacitySlots = growingAreas.reduce((sum, a) => sum + (Number(a.total_slots) || 0), 0)
   const usedCapacitySlots = growingAreas.reduce((sum, a) => {
-    const areaCycles = plantingCycles.filter(c => {
-      if (c.growing_area_id !== a.id) return false
-      if (c.status !== 'seeding' && c.status !== 'growing') return false
-      if (c.planting_start_date && c.planting_start_date > todayStr) return false
-      if (c.expected_harvest_date && c.expected_harvest_date < todayStr) return false
-      return true
-    })
-    const used = areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
-    return sum + used
+    const areaCycles = plantingCycles.filter(c => c.growing_area_id === a.id && isCycleActiveToday(c, todayStr))
+    return sum + areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+  }, 0)
+  const upcomingCapacitySlots = growingAreas.reduce((sum, a) => {
+    const areaCycles = plantingCycles.filter(c => c.growing_area_id === a.id && isCycleUpcoming(c, todayStr))
+    return sum + areaCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
   }, 0)
   const farmOccupancyRate = totalCapacitySlots > 0
     ? Math.min(100, Math.round((usedCapacitySlots / totalCapacitySlots) * 100))
@@ -675,13 +685,17 @@ export default function AdminDashboard() {
                       {growingAreas.map(a => {
                         const aTotal = Number(a.total_slots) || 0
                         const aCycles = plantingCycles.filter(c => c.growing_area_id === a.id)
-                        const aUsed = aCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+                        const aActiveCycles = aCycles.filter(c => isCycleActiveToday(c, todayStr))
+                        const aUpcomingCycles = aCycles.filter(c => isCycleUpcoming(c, todayStr))
+
+                        const aUsed = aActiveCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
+                        const aUpcoming = aUpcomingCycles.reduce((s, c) => s + (Number(c.slots_used) || 0), 0)
                         const aOccupancy = aTotal > 0 ? Math.min(100, Math.round((aUsed / aTotal) * 100)) : 0
 
                         return (
                           <div key={a.id} className="text-xs">
-                            <div className="flex items-center justify-between text-gray-700 mb-1">
-                              <span className="font-medium flex items-center gap-1.5 truncate max-w-[170px]">
+                            <div className="flex items-center justify-between text-gray-700 mb-1 gap-1">
+                              <span className="font-medium flex items-center gap-1.5 truncate max-w-[150px]">
                                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                                   aOccupancy >= 90 ? 'bg-red-500' : aOccupancy >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
                                 }`} />
@@ -690,8 +704,18 @@ export default function AdminDashboard() {
                                   <span className="text-[10px] text-gray-400">· {a.vegetable_types.name}</span>
                                 )}
                               </span>
-                              <span className="text-[11px] text-gray-500 flex-shrink-0">
-                                {aUsed} / {aTotal} ช่อง <strong className="text-forest ml-1">({aOccupancy}%)</strong>
+                              <span className="text-[11px] text-gray-500 flex-shrink-0 flex items-center gap-1.5">
+                                <span>
+                                  {aUsed} / {aTotal} ช่อง <strong className="text-forest ml-0.5">({aOccupancy}%)</strong>
+                                </span>
+                                {aUpcoming > 0 && (
+                                  <span
+                                    className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded font-medium whitespace-nowrap"
+                                    title={`ยอดจองล่วงหน้า ${aUpcoming} ช่อง`}
+                                  >
+                                    จองล่วงหน้า {aUpcoming} ช่อง
+                                  </span>
+                                )}
                               </span>
                             </div>
                             <div className="w-full bg-gray-200/80 rounded-full h-1.5 overflow-hidden">
