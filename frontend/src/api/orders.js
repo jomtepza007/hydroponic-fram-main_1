@@ -306,6 +306,13 @@ export async function updateOrderStatus(orderId, status, notes = '', isEquipment
     }
   }
 
+  // ซิงค์สถานะ planting_cycles ให้สอดคล้องกับสถานะ order เสมอ (สำหรับผัก)
+  try {
+    await syncOrderPlantingCycles(orderId, status, isEquipment)
+  } catch (syncErr) {
+    console.warn('Failed to sync planting_cycles in updateOrderStatus:', syncErr)
+  }
+
   // ส่งการแจ้งเตือนไปยังลูกค้าเมื่อสถานะออเดอร์เปลี่ยน
   if (data?.customer_id) {
     try {
@@ -317,6 +324,173 @@ export async function updateOrderStatus(orderId, status, notes = '', isEquipment
   }
 
   return data
+}
+
+/** Sync สถานะ planting_cycles ให้ตรงกับ order ที่เกี่ยวข้อง */
+export async function syncOrderPlantingCycles(orderId, orderStatus, isEquipment = false) {
+  if (isEquipment || !orderId) return
+
+  const cycleStatusMap = {
+    seeding: 'seeding',
+    growing: 'growing',
+    ready: 'ready',
+    completed: 'done',
+    delivered: 'done',
+    cancelled: 'cancelled',
+  }
+
+  const cycleStatus = cycleStatusMap[orderStatus]
+  if (!cycleStatus) return
+
+  try {
+    const { data: items, error: itemsErr } = await supabase
+      .from('order_items')
+      .select('id')
+      .eq('order_id', orderId)
+
+    if (itemsErr || !items || items.length === 0) return
+
+    const itemIds = items.map(i => i.id)
+    const todayStr = new Date().toISOString().split('T')[0]
+    const updatePayload = { status: cycleStatus }
+
+    if (cycleStatus === 'done' || orderStatus === 'ready' || orderStatus === 'completed' || orderStatus === 'delivered') {
+      updatePayload.actual_harvest_date = todayStr
+    }
+
+    // เมื่อสถานะเป็น seeding (เพาะเมล็ด) หรือ growing (ลงรางปลูก)
+    // ถือว่าเริ่มปลูกจริงแล้ว: ปรับ planting_start_date เป็นวันนี้ หากวันเดิมยังอยู่ในอนาคตหรือยังไม่กำหนด
+    if (cycleStatus === 'seeding' || cycleStatus === 'growing') {
+      const { data: currentCycles } = await supabase
+        .from('planting_cycles')
+        .select('id, planting_start_date')
+        .in('order_item_id', itemIds)
+
+      if (currentCycles && currentCycles.length > 0) {
+        for (const cycle of currentCycles) {
+          const cycleUpdate = { ...updatePayload }
+          if (!cycle.planting_start_date || cycle.planting_start_date > todayStr) {
+            cycleUpdate.planting_start_date = todayStr
+          }
+          await supabase
+            .from('planting_cycles')
+            .update(cycleUpdate)
+            .eq('id', cycle.id)
+        }
+        return
+      }
+    }
+
+    const { error: updateErr } = await supabase
+      .from('planting_cycles')
+      .update(updatePayload)
+      .in('order_item_id', itemIds)
+
+    if (updateErr) {
+      console.warn('Failed to update planting_cycles for order:', orderId, updateErr)
+    }
+  } catch (err) {
+    console.warn('syncOrderPlantingCycles error:', err)
+  }
+}
+
+/**
+ * ตรวจสอบและซิงค์รอบปลูก (planting_cycles) ที่ตกค้างให้ตรงกับสถานะจริงของ order
+ * เช่น order เป็น completed/cancelled/ลบไปแล้ว แต่ cycle ยังค้างเป็น scheduled/seeding/growing
+ */
+export async function cleanupDesyncedPlantingCycles() {
+  try {
+    const { data: cycles, error } = await supabase
+      .from('planting_cycles')
+      .select(`
+        id,
+        status,
+        slots_used,
+        planting_start_date,
+        vegetable_type_id,
+        order_item_id,
+        order_items (
+          order_id,
+          orders (id, status)
+        )
+      `)
+      .in('status', ['scheduled', 'seeding', 'growing', 'ready'])
+
+    if (error || !cycles || cycles.length === 0) return { updated: 0 }
+
+    const doneIds = []
+    const cancelIds = []
+    const syncActiveCycles = []
+    const todayStr = new Date().toISOString().split('T')[0]
+
+    for (const c of cycles) {
+      // กรณีรอบปลูกว่างเปล่า/ทดสอบ (ไม่มี order_item และไม่มี vegetable_type) หรือ slots_used <= 0
+      if ((!c.order_item_id && !c.vegetable_type_id) || (Number(c.slots_used) || 0) <= 0) {
+        cancelIds.push(c.id)
+        continue
+      }
+
+      // กรณีรอบปลูกผูกกับ order_item แต่ order ถูกลบออกจากระบบไปแล้ว
+      if (c.order_item_id && (!c.order_items || !c.order_items?.orders)) {
+        cancelIds.push(c.id)
+        continue
+      }
+
+      const orderStatus = c.order_items?.orders?.status
+      if (orderStatus === 'completed' || orderStatus === 'delivered') {
+        doneIds.push(c.id)
+      } else if (orderStatus === 'cancelled') {
+        cancelIds.push(c.id)
+      } else if (orderStatus === 'seeding' || orderStatus === 'growing') {
+        // หากออเดอร์อยู่ในสถานะเริ่มปลูกแล้ว (seeding หรือ growing)
+        // ซิงค์สถานะรอบปลูกให้ตรง และปรับวันเริ่มปลูกให้เป็นวันนี้หากวันเดิมยังอยู่ในอนาคต
+        const needStatusSync = c.status !== orderStatus
+        const needStartDateSync = Boolean(c.planting_start_date && c.planting_start_date > todayStr)
+        if (needStatusSync || needStartDateSync) {
+          syncActiveCycles.push({
+            id: c.id,
+            status: orderStatus,
+            planting_start_date: needStartDateSync ? todayStr : c.planting_start_date
+          })
+        }
+      }
+    }
+
+    let updatedCount = 0
+
+    if (doneIds.length > 0) {
+      const { error: doneErr } = await supabase
+        .from('planting_cycles')
+        .update({ status: 'done', actual_harvest_date: todayStr })
+        .in('id', doneIds)
+      if (!doneErr) updatedCount += doneIds.length
+    }
+
+    if (cancelIds.length > 0) {
+      const { error: cancelErr } = await supabase
+        .from('planting_cycles')
+        .update({ status: 'cancelled' })
+        .in('id', cancelIds)
+      if (!cancelErr) updatedCount += cancelIds.length
+    }
+
+    if (syncActiveCycles.length > 0) {
+      for (const sc of syncActiveCycles) {
+        const updatePayload = { status: sc.status }
+        if (sc.planting_start_date) updatePayload.planting_start_date = sc.planting_start_date
+        const { error: sErr } = await supabase
+          .from('planting_cycles')
+          .update(updatePayload)
+          .eq('id', sc.id)
+        if (!sErr) updatedCount++
+      }
+    }
+
+    return { updated: updatedCount }
+  } catch (err) {
+    console.warn('cleanupDesyncedPlantingCycles error:', err)
+    return { updated: 0, error: err }
+  }
 }
 
 /** ปรับส่วนลดต่อรายการสินค้า (order_items) พร้อมบันทึกประวัติ discount_logs */

@@ -210,7 +210,7 @@ const orderHeaders = [
 /**
  * 1.1 Export ออเดอร์เป็น Excel (.xlsx) - จัดความกว้างคอลัมน์ให้อ่านง่าย ไม่มี ##### ไม่มี 9.5E+09
  */
-export function exportOrdersToExcel(orders = []) {
+export function exportOrdersToExcel(orders = [], customFilename = '') {
   let totalOriginalSum = 0
   let totalDiscountSum = 0
   let totalFinalSum = 0
@@ -335,13 +335,13 @@ export function exportOrdersToExcel(orders = []) {
 
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'รายงานยอดขายและออเดอร์')
-  downloadExcel(wb, `hydrofarm_sales_orders_${getTodayDateStr()}.xlsx`)
+  downloadExcel(wb, customFilename || `hydrofarm_sales_orders_${getTodayDateStr()}.xlsx`)
 }
 
 /**
  * 1.2 Export ออเดอร์เป็น CSV (.csv) - มีสูตร text formula ป้องกัน Excel แสดง ##### หรือ 9.5E+09
  */
-export function exportOrdersToCSV(orders = []) {
+export function exportOrdersToCSV(orders = [], customFilename = '') {
   let totalOriginalSum = 0
   let totalDiscountSum = 0
   let totalFinalSum = 0
@@ -422,7 +422,7 @@ export function exportOrdersToCSV(orders = []) {
   ].join(',')
 
   const csvContent = [orderHeaders.map(escapeCSV).join(','), ...rows, summaryRow].join('\r\n')
-  downloadCSV(csvContent, `hydrofarm_sales_orders_${getTodayDateStr()}.csv`)
+  downloadCSV(csvContent, customFilename || `hydrofarm_sales_orders_${getTodayDateStr()}.csv`)
 }
 
 // =====================================================================

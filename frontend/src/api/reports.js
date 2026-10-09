@@ -1,24 +1,68 @@
 import { supabase } from './supabaseClient'
-import { format, subDays, startOfWeek, startOfMonth, startOfYear } from 'date-fns'
+import {
+  format,
+  subDays,
+  startOfWeek,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  startOfYear,
+  endOfYear,
+  parseISO,
+} from 'date-fns'
 
-/** รายงานสรุปออเดอร์ตาม period */
-export async function getOrderReport(period = 'month') {
-  let startDate
+/** รายงานสรุปออเดอร์ตาม period และวันที่ที่ระบุ */
+export async function getOrderReport(period = 'month', options = {}) {
   const now = new Date()
+  let startDate
+  let endDate
 
-  switch (period) {
-    case 'day':   startDate = format(subDays(now, 1), 'yyyy-MM-dd'); break
-    case 'week':  startDate = format(startOfWeek(now), 'yyyy-MM-dd'); break
-    case 'month': startDate = format(startOfMonth(now), 'yyyy-MM-dd'); break
-    case 'year':  startDate = format(startOfYear(now), 'yyyy-MM-dd'); break
-    default:      startDate = format(startOfMonth(now), 'yyyy-MM-dd')
+  if (period === 'day') {
+    const targetDate = options.selectedDate || format(now, 'yyyy-MM-dd')
+    const [y, m, d] = targetDate.split('-').map(Number)
+    startDate = new Date(y, m - 1, d, 0, 0, 0, 0).toISOString()
+    endDate = new Date(y, m - 1, d, 23, 59, 59, 999).toISOString()
+  } else if (period === 'week') {
+    const baseDate = options.selectedDate ? parseISO(options.selectedDate) : now
+    const weekStart = startOfWeek(baseDate, { weekStartsOn: 1 })
+    const weekEnd = endOfWeek(baseDate, { weekStartsOn: 1 })
+    startDate = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate(), 0, 0, 0, 0).toISOString()
+    endDate = new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate(), 23, 59, 59, 999).toISOString()
+  } else if (period === 'month') {
+    let year, month
+    if (options.selectedMonth) {
+      const [y, m] = options.selectedMonth.split('-').map(Number)
+      year = y
+      month = m - 1
+    } else {
+      year = now.getFullYear()
+      month = now.getMonth()
+    }
+    startDate = new Date(year, month, 1, 0, 0, 0, 0).toISOString()
+    endDate = new Date(year, month + 1, 0, 23, 59, 59, 999).toISOString()
+  } else if (period === 'year') {
+    const targetYear = Number(options.selectedYear) || now.getFullYear()
+    startDate = new Date(targetYear, 0, 1, 0, 0, 0, 0).toISOString()
+    endDate = new Date(targetYear, 11, 31, 23, 59, 59, 999).toISOString()
+  } else {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString()
+    endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString()
   }
 
   const { data, error } = await supabase
     .from('orders')
-    .select(`*, order_items(quantity, price_at_order, vegetable_types(name))`)
+    .select(`
+      *,
+      profiles:customer_id (full_name, phone, email, customer_type),
+      order_items (
+        *,
+        vegetable_types (name, unit, category)
+      )
+    `)
     .gte('created_at', startDate)
+    .lte('created_at', endDate)
     .order('created_at', { ascending: true })
+
   if (error) throw error
   return data
 }

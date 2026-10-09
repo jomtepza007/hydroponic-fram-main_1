@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, Search, Phone, Package, Leaf, Mail, History, Camera } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
+import OrderDateFilter, { filterOrdersByDate } from '../../components/orders/OrderDateFilter'
 import { getAllOrders, updateOrderStatus } from '../../api/orders'
 import {
   formatDateTh,
@@ -50,6 +51,10 @@ export default function FarmerOrders() {
   const [statusFilter, setStatusFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [dateType, setDateType] = useState('pickup')
+  const [datePreset, setDatePreset] = useState('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
 
   useEffect(() => {
     loadOrders()
@@ -84,8 +89,11 @@ export default function FarmerOrders() {
       })
     }
 
+    // Filter by Date
+    result = filterOrdersByDate(result, { dateType, datePreset, startDate, endDate })
+
     setFiltered(result)
-  }, [orders, statusFilter, categoryFilter, searchTerm])
+  }, [orders, statusFilter, categoryFilter, searchTerm, dateType, datePreset, startDate, endDate])
 
   async function loadOrders() {
     try {
@@ -181,7 +189,7 @@ export default function FarmerOrders() {
           </div>
 
           {/* Status Filters */}
-          <div className="flex gap-1.5 flex-wrap mb-6">
+          <div className="flex gap-1.5 flex-wrap mb-4">
             {STATUS_FILTERS.map(f => (
               <button
                 key={f.value}
@@ -196,6 +204,25 @@ export default function FarmerOrders() {
               </button>
             ))}
           </div>
+
+          {/* Date Filter Bar */}
+          <OrderDateFilter
+            dateType={dateType}
+            onDateTypeChange={setDateType}
+            datePreset={datePreset}
+            onDatePresetChange={setDatePreset}
+            startDate={startDate}
+            onStartDateChange={setStartDate}
+            endDate={endDate}
+            onEndDateChange={setEndDate}
+            onReset={() => {
+              setDatePreset('all')
+              setStartDate('')
+              setEndDate('')
+            }}
+            isHistory={false}
+            totalFilteredCount={filtered.length}
+          />
 
           {/* Table */}
           <div className="table-wrapper">

@@ -23,6 +23,7 @@ import {
 } from '../../utils/csvExport'
 import { formatDateTh } from '../../utils/dateUtils'
 import { getCustomerTypeConfig } from '../../utils/customerTypeUtils'
+import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
 const PERIODS = [
@@ -50,9 +51,25 @@ function formatShortDate(dateStr) {
   }
 }
 
+function getInitialDates() {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return {
+    date: `${year}-${month}-${day}`,
+    month: `${year}-${month}`,
+    year: String(year),
+  }
+}
+
 export default function AdminReports() {
   const [activeTab, setActiveTab] = useState('overview') // 'overview' | 'discounts'
   const [period, setPeriod] = useState('month')
+  const [selectedDate, setSelectedDate] = useState(() => getInitialDates().date)
+  const [selectedMonth, setSelectedMonth] = useState(() => getInitialDates().month)
+  const [selectedYear, setSelectedYear] = useState(() => getInitialDates().year)
+
   const [orders, setOrders] = useState([])
   const [topVegs, setTopVegs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -69,7 +86,7 @@ export default function AdminReports() {
 
   useEffect(() => {
     loadData()
-  }, [period])
+  }, [period, selectedDate, selectedMonth, selectedYear])
 
   useEffect(() => {
     if (activeTab === 'discounts' && discountLogs.length === 0) {
@@ -92,7 +109,7 @@ export default function AdminReports() {
     setLoading(true)
     try {
       const [ordersData, vegsData] = await Promise.all([
-        getOrderReport(period),
+        getOrderReport(period, { selectedDate, selectedMonth, selectedYear }),
         getTopVegetables(8),
       ])
       setOrders(ordersData || [])
@@ -102,6 +119,52 @@ export default function AdminReports() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleResetCurrentDate() {
+    const init = getInitialDates()
+    setSelectedDate(init.date)
+    setSelectedMonth(init.month)
+    setSelectedYear(init.year)
+  }
+
+  function getPeriodLabelTh() {
+    if (period === 'day') {
+      return `รายวัน (${formatDateTh(selectedDate)})`
+    }
+    if (period === 'week') {
+      return `รายสัปดาห์ (สัปดาห์ของ ${formatDateTh(selectedDate)})`
+    }
+    if (period === 'month') {
+      const [y, m] = selectedMonth.split('-')
+      const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+      const mIdx = parseInt(m, 10) - 1
+      const yearTh = parseInt(y, 10) + 543
+      return `ประจำเดือน ${months[mIdx] || m} ${yearTh}`
+    }
+    if (period === 'year') {
+      return `ประจำปี พ.ศ. ${parseInt(selectedYear, 10) + 543}`
+    }
+    return 'ช่วงเวลาที่เลือก'
+  }
+
+  function getSalesExportFilename(format, scope = 'current') {
+    if (scope === 'all') {
+      return `รายงานออเดอร์ทั้งหมด_all_time_${selectedDate}.${format}`
+    }
+    if (period === 'day') {
+      return `รายงานยอดขาย_รายวัน_${selectedDate}.${format}`
+    }
+    if (period === 'week') {
+      return `รายงานยอดขาย_รายสัปดาห์_${selectedDate}.${format}`
+    }
+    if (period === 'month') {
+      return `รายงานยอดขาย_ประจำเดือน_${selectedMonth}.${format}`
+    }
+    if (period === 'year') {
+      return `รายงานยอดขาย_ประจำปี_${selectedYear}.${format}`
+    }
+    return `รายงานยอดขาย_${selectedDate}.${format}`
   }
 
   async function loadDiscountLogs() {
@@ -117,30 +180,49 @@ export default function AdminReports() {
   }
 
   // --- ฟังก์ชัน Export แต่ละประเภท (รองรับทั้ง Excel .xlsx และ CSV) ---
-  async function handleExportSales(format = 'xlsx') {
+  async function handleExportSales(format = 'xlsx', scope = 'current') {
     setExporting(true)
     setShowExportMenu(false)
     try {
-      toast.loading(`กำลังรวบรวมข้อมูลยอดขาย (${format.toUpperCase()})...`, { id: 'export-sales' })
-      const { data: allOrders, error } = await supabase
-        .from('orders')
-        .select(`
-          *,
-          profiles:customer_id (full_name, phone, email, customer_type),
-          order_items (
-            *,
-            vegetable_types (name, unit, category)
-          )
-        `)
-        .order('created_at', { ascending: false })
+      const scopeLabel = scope === 'all' ? 'ประวัติทั้งหมด' : getPeriodLabelTh()
+      toast.loading(`กำลังรวบรวมข้อมูลยอดขาย ${scopeLabel} (${format.toUpperCase()})...`, { id: 'export-sales' })
 
-      if (error) throw error
-      if (format === 'csv') {
-        exportOrdersToCSV(allOrders || [])
-        toast.success('ส่งออกรายงานยอดขาย (.csv) เรียบร้อย ✅', { id: 'export-sales' })
+      let exportList = []
+      const filename = getSalesExportFilename(format, scope)
+
+      if (scope === 'all') {
+        const { data: allOrders, error } = await supabase
+          .from('orders')
+          .select(`
+            *,
+            profiles:customer_id (full_name, phone, email, customer_type),
+            order_items (
+              *,
+              vegetable_types (name, unit, category)
+            )
+          `)
+          .order('created_at', { ascending: false })
+
+        if (error) throw error
+        exportList = allOrders || []
       } else {
-        exportOrdersToExcel(allOrders || [])
-        toast.success('ส่งออกรายงานยอดขาย (.xlsx) เรียบร้อย ✅', { id: 'export-sales' })
+        // ใช้ข้อมูลตามช่วงเวลาที่กรองอยู่
+        const filteredOrders = await getOrderReport(period, { selectedDate, selectedMonth, selectedYear })
+        exportList = filteredOrders || []
+      }
+
+      if (exportList.length === 0) {
+        toast.dismiss('export-sales')
+        toast.error(`ไม่พบรายการออเดอร์สำหรับ ${scopeLabel}`, { id: 'export-sales' })
+        return
+      }
+
+      if (format === 'csv') {
+        exportOrdersToCSV(exportList, filename)
+        toast.success(`ส่งออกรายงานยอดขาย ${scopeLabel} (.csv) เรียบร้อย ✅`, { id: 'export-sales' })
+      } else {
+        exportOrdersToExcel(exportList, filename)
+        toast.success(`ส่งออกรายงานยอดขาย ${scopeLabel} (.xlsx) เรียบร้อย ✅`, { id: 'export-sales' })
       }
     } catch (err) {
       console.error(err)
@@ -205,7 +287,7 @@ export default function AdminReports() {
   const chartData = (() => {
     const map = {}
     orders.forEach(o => {
-      const date = o.created_at?.split('T')[0] || ''
+      const date = o.created_at ? format(new Date(o.created_at), 'yyyy-MM-dd') : ''
       if (!date) return
       if (!map[date]) {
         map[date] = {
@@ -286,34 +368,53 @@ export default function AdminReports() {
               </button>
 
               {showExportMenu && (
-                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-gray-100 py-2.5 z-50 animate-slide-up">
+                <div className="absolute right-0 top-full mt-2 w-84 bg-white rounded-2xl shadow-xl border border-gray-100 py-2.5 z-50 animate-slide-up">
                   <div className="px-4 py-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-between">
-                    <span>รายงานยอดขาย & ออเดอร์</span>
-                    <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-bold">แนะนำ</span>
+                    <span>รายงานยอดขายตามช่วงเวลา</span>
+                    <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-bold">
+                      {PERIODS.find(p => p.value === period)?.label || 'ช่วงนี้'}
+                    </span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleExportSales('xlsx')}
+                    onClick={() => handleExportSales('xlsx', 'current')}
                     className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-primary-50 hover:text-forest flex items-center gap-3 transition-colors"
                   >
                     <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
                     <div>
                       <p className="font-semibold text-xs flex items-center gap-1.5">
-                        <span>ยอดขาย & ออเดอร์ (Excel .xlsx)</span>
+                        <span>ยอดขายตามตัวกรอง (Excel .xlsx)</span>
                         <span className="text-[9px] bg-emerald-50 text-emerald-700 font-semibold px-1 rounded border border-emerald-200">สวยงาม</span>
                       </p>
-                      <p className="text-[11px] text-gray-400">คอลัมน์กว้างพอดี วันที่ไม่เป็น ##### เบอร์ไม่เพี้ยน</p>
+                      <p className="text-[11px] text-gray-400">{getPeriodLabelTh()} ({orders.length} รายการ)</p>
                     </div>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleExportSales('csv')}
+                    onClick={() => handleExportSales('csv', 'current')}
                     className="w-full px-4 py-2 text-left text-xs text-gray-600 hover:bg-gray-50 hover:text-gray-800 flex items-center gap-3 transition-colors"
                   >
                     <Download className="w-3.5 h-3.5 text-gray-400 shrink-0 ml-0.5" />
                     <div>
-                      <p className="font-medium">ยอดขาย & ออเดอร์ (ไฟล์ .CSV)</p>
-                      <p className="text-[10px] text-gray-400">มีสูตร text formula ป้องกัน Excel ทำลายข้อมูล</p>
+                      <p className="font-medium">ยอดขายตามตัวกรอง (ไฟล์ .CSV)</p>
+                      <p className="text-[10px] text-gray-400">{getPeriodLabelTh()}</p>
+                    </div>
+                  </button>
+
+                  <div className="border-t border-gray-100 my-2"></div>
+
+                  <div className="px-4 py-1.5 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                    สำรองข้อมูลประวัติทั้งหมด
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleExportSales('xlsx', 'all')}
+                    className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-primary-50 hover:text-forest flex items-center gap-3 transition-colors"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-blue-600 shrink-0" />
+                    <div>
+                      <p className="font-semibold text-xs">ออเดอร์ทั้งหมดตลอดกาล (Excel .xlsx)</p>
+                      <p className="text-[11px] text-gray-400">ประวัติออเดอร์ทั้งหมดตั้งแต่เริ่มระบบ (All-Time)</p>
                     </div>
                   </button>
 
@@ -385,28 +486,111 @@ export default function AdminReports() {
             <div className="space-y-6">
 
               {/* Period Selector Card */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-xs">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-forest" />
-                  <span className="text-xs font-bold text-gray-700">เลือกช่วงเวลาในการวิเคราะห์:</span>
-                  <span className="text-xs text-gray-400">
-                    ({PERIODS.find(p => p.value === period)?.label || 'รายเดือน'})
-                  </span>
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-4 lg:p-5 rounded-2xl border border-gray-100 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-forest" />
+                    <span className="text-xs font-bold text-gray-700">เลือกช่วงเวลาในการวิเคราะห์:</span>
+                  </div>
+                  {/* The 4 Period Preset Buttons - kept intact as requested */}
+                  <div className="flex gap-1.5 bg-gray-50 p-1 rounded-xl border border-gray-200/60">
+                    {PERIODS.map(p => (
+                      <button
+                        key={p.value}
+                        onClick={() => setPeriod(p.value)}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all
+                          ${period === p.value
+                            ? 'bg-forest text-white shadow-xs'
+                            : 'text-gray-600 hover:bg-white hover:text-gray-800'
+                          }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex gap-1.5 bg-gray-50 p-1 rounded-xl border border-gray-200/60">
-                  {PERIODS.map(p => (
+
+                {/* Specific Period Pickers & Action Controls */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200/70">
+                    <span className="text-xs font-medium text-gray-500">
+                      {period === 'day' && 'เลือกวันที่:'}
+                      {period === 'week' && 'สัปดาห์ของวันที่:'}
+                      {period === 'month' && 'เลือกเดือน:'}
+                      {period === 'year' && 'เลือกปี:'}
+                    </span>
+
+                    {period === 'day' && (
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={e => setSelectedDate(e.target.value)}
+                        className="text-xs font-bold bg-white text-gray-800 px-2.5 py-1 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-forest cursor-pointer"
+                      />
+                    )}
+
+                    {period === 'week' && (
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={e => setSelectedDate(e.target.value)}
+                        className="text-xs font-bold bg-white text-gray-800 px-2.5 py-1 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-forest cursor-pointer"
+                        title="เลือกวันใดก็ได้ในสัปดาห์ที่ต้องการ"
+                      />
+                    )}
+
+                    {period === 'month' && (
+                      <input
+                        type="month"
+                        value={selectedMonth}
+                        onChange={e => setSelectedMonth(e.target.value)}
+                        className="text-xs font-bold bg-white text-gray-800 px-2.5 py-1 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-forest cursor-pointer"
+                      />
+                    )}
+
+                    {period === 'year' && (
+                      <select
+                        value={selectedYear}
+                        onChange={e => setSelectedYear(e.target.value)}
+                        className="text-xs font-bold bg-white text-gray-800 px-2.5 py-1 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-forest cursor-pointer"
+                      >
+                        {[0, 1, 2, 3, 4].map(offset => {
+                          const y = new Date().getFullYear() - offset
+                          return (
+                            <option key={y} value={String(y)}>
+                              พ.ศ. {y + 543} ({y})
+                            </option>
+                          )
+                        })}
+                      </select>
+                    )}
+
                     <button
-                      key={p.value}
-                      onClick={() => setPeriod(p.value)}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all
-                        ${period === p.value
-                          ? 'bg-forest text-white shadow-xs'
-                          : 'text-gray-600 hover:bg-white hover:text-gray-800'
-                        }`}
+                      type="button"
+                      onClick={handleResetCurrentDate}
+                      className="text-[11px] font-semibold text-forest hover:bg-forest/10 px-2 py-0.5 rounded transition-colors"
+                      title="กลับสู่วัน/เดือนปัจจุบัน"
                     >
-                      {p.label}
+                      ปัจจุบัน
                     </button>
-                  ))}
+                  </div>
+
+                  {/* Active Period Badge */}
+                  <span className="text-xs font-bold text-forest bg-primary-50 px-2.5 py-1.5 rounded-xl border border-primary-200">
+                    {getPeriodLabelTh()}
+                  </span>
+
+                  {/* Quick Export Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleExportSales('xlsx', 'current')}
+                    disabled={exporting}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50"
+                    title={`ส่งออกรายงาน ${getPeriodLabelTh()} (.xlsx)`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Export งวดนี้ (.xlsx)</span>
+                  </button>
                 </div>
               </div>
 
@@ -445,7 +629,7 @@ export default function AdminReports() {
                   </p>
                   <div className="flex items-center gap-1.5 mt-2 text-xs text-blue-700 font-medium">
                     <Clock className="w-3.5 h-3.5" />
-                    <span>ช่วง {PERIODS.find(p => p.value === period)?.label || 'ช่วงเวลา'}</span>
+                    <span>ช่วง {getPeriodLabelTh()}</span>
                   </div>
                 </div>
 

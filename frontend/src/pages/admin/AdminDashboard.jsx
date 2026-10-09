@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
-import { getAllOrders } from '../../api/orders'
+import { getAllOrders, cleanupDesyncedPlantingCycles } from '../../api/orders'
 import { getResources } from '../../api/resources'
 import { getTopVegetables } from '../../api/reports'
 import { supabase } from '../../api/supabaseClient'
@@ -44,13 +44,18 @@ const STATUS_LABELS = {
 }
 
 function isCycleActiveToday(c, today) {
-  if (c.status !== 'seeding' && c.status !== 'growing') return false
-  if (c.planting_start_date && c.planting_start_date > today) return false
-  if (c.expected_harvest_date && c.expected_harvest_date < today) return false
-  return true
+  // ถ้าอยู่ในสถานะเพาะเมล็ดหรือลงรางปลูกแล้ว ถือว่าใช้งานช่องปลูกจริงแล้วทันที
+  if (c.status === 'seeding' || c.status === 'growing') {
+    if (c.expected_harvest_date && c.expected_harvest_date < today) return false
+    return true
+  }
+  return false
 }
 
 function isCycleUpcoming(c, today) {
+  // ถ้าลงแปลงปลูกจริงแล้ว (seeding/growing) จะไม่นับเป็นยอดจองล่วงหน้าเด็ดขาด
+  if (c.status === 'seeding' || c.status === 'growing') return false
+  // ยอดจองล่วงหน้าต้องเป็นสถานะ scheduled หรือรอบที่รอเริ่มปลูกตามแผน
   if (c.status === 'scheduled') return true
   if (c.planting_start_date && c.planting_start_date > today) return true
   return false
@@ -74,6 +79,13 @@ export default function AdminDashboard() {
   async function loadData(isManual = false) {
     if (isManual) setRefreshing(true)
     try {
+      // ซิงค์และคลีนอัพรอบปลูกที่ตกค้างจากออเดอร์ที่เสร็จสิ้น/ยกเลิกไปแล้ว
+      try {
+        await cleanupDesyncedPlantingCycles()
+      } catch (cleanErr) {
+        console.warn('Dashboard cleanup desynced cycles warning:', cleanErr)
+      }
+
       const [
         ordersRes,
         resourcesRes,
@@ -87,14 +99,27 @@ export default function AdminDashboard() {
         getTopVegetables(5),
         supabase.from('growing_areas').select('*, vegetable_types(name)').order('name'),
         supabase.from('profiles').select('id, customer_type'),
-        supabase.from('planting_cycles').select('growing_area_id, slots_used, status, planting_start_date, expected_harvest_date').in('status', ['scheduled', 'seeding', 'growing']),
+        supabase.from('planting_cycles')
+          .select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date, vegetable_type_id, order_item_id, order_items(order_id, orders(id, status))')
+          .in('status', ['scheduled', 'seeding', 'growing']),
       ])
 
       if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value || [])
       if (resourcesRes.status === 'fulfilled') setResources(resourcesRes.value || [])
       if (topVegsRes.status === 'fulfilled') setTopVegs(topVegsRes.value || [])
       if (areasRes.status === 'fulfilled') setGrowingAreas(areasRes.value.data || [])
-      if (cyclesRes.status === 'fulfilled') setPlantingCycles(cyclesRes.value.data || [])
+      if (cyclesRes.status === 'fulfilled') {
+        const rawCycles = cyclesRes.value.data || []
+        const validCycles = rawCycles.filter(c => {
+          if ((Number(c.slots_used) || 0) <= 0) return false
+          if (!c.order_item_id && !c.vegetable_type_id) return false
+          if (c.order_item_id && (!c.order_items || !c.order_items?.orders)) return false
+          const ordStatus = c.order_items?.orders?.status
+          if (ordStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'cancelled') return false
+          return true
+        })
+        setPlantingCycles(validCycles)
+      }
       if (usersRes.status === 'fulfilled') {
         const uList = usersRes.value.data || []
         setUsersCount(uList.length)

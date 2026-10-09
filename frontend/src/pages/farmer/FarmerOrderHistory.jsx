@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Search, History, Package, Mail, Phone, CheckCircle2, XCircle } from 'lucide-react'
+import { ChevronRight, Search, History, Package, Mail, Phone, CheckCircle2, XCircle, Download } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
+import OrderDateFilter, { filterOrdersByDate } from '../../components/orders/OrderDateFilter'
 import { getAllOrders } from '../../api/orders'
+import { exportOrdersToExcel } from '../../utils/csvExport'
 import {
   formatDateTh,
   isEquipmentOrder,
@@ -33,6 +35,10 @@ export default function FarmerOrderHistory() {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [dateType, setDateType] = useState('created')
+  const [datePreset, setDatePreset] = useState('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
 
   useEffect(() => {
     loadOrders()
@@ -65,8 +71,11 @@ export default function FarmerOrderHistory() {
       })
     }
 
+    // Filter by Date
+    result = filterOrdersByDate(result, { dateType, datePreset, startDate, endDate })
+
     setFiltered(result)
-  }, [orders, categoryFilter, statusFilter, searchTerm])
+  }, [orders, categoryFilter, statusFilter, searchTerm, dateType, datePreset, startDate, endDate])
 
   async function loadOrders() {
     try {
@@ -105,16 +114,30 @@ export default function FarmerOrderHistory() {
               </div>
               <p className="page-subtitle">ออเดอร์ที่เสร็จสิ้นและยกเลิกทั้งหมด</p>
             </div>
-            {/* Search */}
-            <div className="relative w-full sm:w-72">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                placeholder="ค้นหาชื่อลูกค้า, เลขออเดอร์..."
-                className="input pl-9 text-sm"
-              />
+            {/* Search & Export */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="ค้นหาชื่อลูกค้า, เลขออเดอร์..."
+                  className="input pl-9 text-xs w-full py-2"
+                />
+              </div>
+
+              <button
+                type="button"
+                id="btn-export-history-excel"
+                onClick={() => exportOrdersToExcel(filtered)}
+                disabled={filtered.length === 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title="ส่งออกประวัติออเดอร์ที่กรองอยู่เป็น Excel (.xlsx)"
+              >
+                <Download className="w-4 h-4 text-emerald-600" />
+                <span>ส่งออก Excel</span>
+              </button>
             </div>
           </div>
 
@@ -175,7 +198,7 @@ export default function FarmerOrderHistory() {
           </div>
 
           {/* Status Filters */}
-          <div className="flex gap-1.5 flex-wrap mb-6">
+          <div className="flex gap-1.5 flex-wrap mb-4">
             {STATUS_FILTERS.map(f => (
               <button
                 key={f.value}
@@ -190,6 +213,25 @@ export default function FarmerOrderHistory() {
               </button>
             ))}
           </div>
+
+          {/* Date Filter Bar */}
+          <OrderDateFilter
+            dateType={dateType}
+            onDateTypeChange={setDateType}
+            datePreset={datePreset}
+            onDatePresetChange={setDatePreset}
+            startDate={startDate}
+            onStartDateChange={setStartDate}
+            endDate={endDate}
+            onEndDateChange={setEndDate}
+            onReset={() => {
+              setDatePreset('all')
+              setStartDate('')
+              setEndDate('')
+            }}
+            isHistory={true}
+            totalFilteredCount={filtered.length}
+          />
 
           {/* Table */}
           <div className="table-wrapper">

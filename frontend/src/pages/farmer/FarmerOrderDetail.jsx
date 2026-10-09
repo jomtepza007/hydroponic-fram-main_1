@@ -139,14 +139,29 @@ export default function FarmerOrderDetail() {
             ?.flatMap(item => item.planting_cycles?.map(c => c.id) || [])
             .filter(Boolean)
           if (cycleIds.length > 0) {
+            const todayStr = new Date().toISOString().split('T')[0]
             const updatePayload = { status: cycleStatus }
             if (cycleStatus === 'done' || nextStatus === 'ready' || nextStatus === 'completed') {
-              updatePayload.actual_harvest_date = new Date().toISOString().split('T')[0]
+              updatePayload.actual_harvest_date = todayStr
             }
-            await supabase
-              .from('planting_cycles')
-              .update(updatePayload)
-              .in('id', cycleIds)
+            if (cycleStatus === 'seeding' || cycleStatus === 'growing') {
+              const { data: cyclesToUpdate } = await supabase
+                .from('planting_cycles')
+                .select('id, planting_start_date')
+                .in('id', cycleIds)
+              for (const cy of (cyclesToUpdate || [])) {
+                const p = { ...updatePayload }
+                if (!cy.planting_start_date || cy.planting_start_date > todayStr) {
+                  p.planting_start_date = todayStr
+                }
+                await supabase.from('planting_cycles').update(p).eq('id', cy.id)
+              }
+            } else {
+              await supabase
+                .from('planting_cycles')
+                .update(updatePayload)
+                .in('id', cycleIds)
+            }
           }
         }
       }

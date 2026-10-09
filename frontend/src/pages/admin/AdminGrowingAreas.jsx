@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { MapPin, Plus, Pencil, X, Trash2, Layers, AlertTriangle, CheckCircle, PieChart } from 'lucide-react'
+import { MapPin, Plus, Pencil, X, Trash2, Layers, AlertTriangle, CheckCircle, PieChart, RefreshCw } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import { supabase } from '../../api/supabaseClient'
+import { cleanupDesyncedPlantingCycles } from '../../api/orders'
 import toast from 'react-hot-toast'
 
 const EMPTY_FORM = { name: '', zone_code: '', total_slots: 100, vegetable_type_id: '', is_active: true }
@@ -24,28 +25,54 @@ export default function AdminGrowingAreas() {
   async function load() {
     setLoading(true)
     try {
+      // 1. ซิงค์และคลีนอัพรอบปลูกที่ตกค้างจากออเดอร์ที่เสร็จสิ้น/ยกเลิกไปแล้ว
+      try {
+        await cleanupDesyncedPlantingCycles()
+      } catch (cleanErr) {
+        console.warn('Cleanup desynced cycles warning:', cleanErr)
+      }
+
+      // 2. ดึงข้อมูลพื้นที่ปลูก ผัก และรอบปลูก
       const [{ data: areasData }, { data: vegsData }, { data: cyclesData }, { data: farmSettingsData }] = await Promise.all([
         supabase.from('growing_areas').select('*, vegetable_types(name)').order('name'),
         supabase.from('vegetable_types').select('id, name').eq('category', 'vegetable').eq('is_active', true).order('name'),
-        supabase.from('planting_cycles').select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date').in('status', ['scheduled', 'seeding', 'growing']),
+        supabase.from('planting_cycles')
+          .select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date, vegetable_type_id, order_item_id, order_items(order_id, orders(id, status))')
+          .in('status', ['scheduled', 'seeding', 'growing']),
         supabase.from('farm_settings').select('total_slots').single(),
       ])
+
+      // 3. กรองเฉพาะรอบปลูกที่ถูกต้อง มีการใช้ช่องปลูกจริง และออเดอร์ยังดำเนินงานอยู่
+      const validCycles = (cyclesData || []).filter(c => {
+        if ((Number(c.slots_used) || 0) <= 0) return false
+        if (!c.order_item_id && !c.vegetable_type_id) return false
+        if (c.order_item_id && (!c.order_items || !c.order_items?.orders)) return false
+        const ordStatus = c.order_items?.orders?.status
+        if (ordStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'cancelled') return false
+        return true
+      })
+
       setAreas(areasData || [])
       setVegetables(vegsData || [])
-      setCycles(cyclesData || [])
+      setCycles(validCycles)
       setFarmMaxSlots(Number(farmSettingsData?.total_slots) || 0)
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }
 
   function isCycleActiveToday(c, today) {
-    if (c.status !== 'seeding' && c.status !== 'growing') return false
-    if (c.planting_start_date && c.planting_start_date > today) return false
-    if (c.expected_harvest_date && c.expected_harvest_date < today) return false
-    return true
+    // ถ้าอยู่ในสถานะเพาะเมล็ดหรือลงรางปลูกแล้ว ถือว่าใช้งานช่องปลูกจริงแล้วทันที
+    if (c.status === 'seeding' || c.status === 'growing') {
+      if (c.expected_harvest_date && c.expected_harvest_date < today) return false
+      return true
+    }
+    return false
   }
 
   function isCycleUpcoming(c, today) {
+    // ถ้าลงแปลงปลูกจริงแล้ว (seeding/growing) จะไม่นับเป็นยอดจองล่วงหน้าเด็ดขาด
+    if (c.status === 'seeding' || c.status === 'growing') return false
+    // ยอดจองล่วงหน้าต้องเป็นสถานะ scheduled หรือรอบที่รอเริ่มปลูกตามแผน
     if (c.status === 'scheduled') return true
     if (c.planting_start_date && c.planting_start_date > today) return true
     return false
@@ -141,9 +168,21 @@ export default function AdminGrowingAreas() {
               <h1 className="page-title">จัดการพื้นที่ปลูก</h1>
               <p className="page-subtitle">เพิ่มและจัดการโซนการปลูกผัก กำหนดแปลงเฉพาะและแปลงรวม (Waterfall Model)</p>
             </div>
-            <button id="btn-add-area" onClick={openAdd} className="btn-primary">
-              <Plus className="w-4 h-4" /> เพิ่มพื้นที่
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={load}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-all shadow-xs disabled:opacity-50"
+                title="รีเฟรชและซิงค์รอบปลูกล่าสุด"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-forest' : 'text-gray-500'}`} />
+                <span>รีเฟรช & ซิงค์</span>
+              </button>
+              <button id="btn-add-area" onClick={openAdd} className="btn-primary">
+                <Plus className="w-4 h-4" /> เพิ่มพื้นที่
+              </button>
+            </div>
           </div>
 
           {/* Alert Banner: When current areas exceed farm capacity ceiling */}

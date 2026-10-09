@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
-import { getAllOrders } from '../../api/orders'
+import { getAllOrders, cleanupDesyncedPlantingCycles } from '../../api/orders'
 import { getResources, getLowStockResources } from '../../api/resources'
 import { supabase } from '../../api/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
@@ -29,6 +29,12 @@ export default function FarmerDashboard() {
 
   async function loadData() {
     try {
+      try {
+        await cleanupDesyncedPlantingCycles()
+      } catch (cleanErr) {
+        console.warn('FarmerDashboard cleanup desynced cycles warning:', cleanErr)
+      }
+
       const [ordersRes, stockRes, resourcesRes, cyclesRes, areasRes, activeCyclesRes] = await Promise.allSettled([
         getAllOrders(),
         getLowStockResources(),
@@ -38,12 +44,21 @@ export default function FarmerDashboard() {
           .select(`
             *,
             vegetable_types (name, unit),
-            growing_areas (name, zone_code)
+            growing_areas (name, zone_code),
+            order_items (order_id, orders (id, status))
           `)
           .in('status', ['scheduled', 'seeding', 'growing'])
           .order('planting_start_date', { ascending: true })
-          .limit(5)
-          .then(({ data }) => data || []),
+          .then(({ data }) => {
+            return (data || []).filter(c => {
+              if ((Number(c.slots_used) || 0) <= 0) return false
+              if (!c.order_item_id && !c.vegetable_type_id) return false
+              if (c.order_item_id && (!c.order_items || !c.order_items?.orders)) return false
+              const ordStatus = c.order_items?.orders?.status
+              if (ordStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'cancelled') return false
+              return true
+            }).slice(0, 5)
+          }),
         supabase
           .from('growing_areas')
           .select('*, vegetable_types(name)')
@@ -52,9 +67,18 @@ export default function FarmerDashboard() {
           .then(({ data }) => data || []),
         supabase
           .from('planting_cycles')
-          .select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date')
+          .select('id, growing_area_id, slots_used, status, planting_start_date, expected_harvest_date, vegetable_type_id, order_item_id, order_items(order_id, orders(id, status))')
           .in('status', ['scheduled', 'seeding', 'growing'])
-          .then(({ data }) => data || []),
+          .then(({ data }) => {
+            return (data || []).filter(c => {
+              if ((Number(c.slots_used) || 0) <= 0) return false
+              if (!c.order_item_id && !c.vegetable_type_id) return false
+              if (c.order_item_id && (!c.order_items || !c.order_items?.orders)) return false
+              const ordStatus = c.order_items?.orders?.status
+              if (ordStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'cancelled') return false
+              return true
+            })
+          }),
       ])
       if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value || [])
       if (stockRes.status === 'fulfilled') setLowStock(stockRes.value || [])
@@ -81,7 +105,6 @@ export default function FarmerDashboard() {
     const areaCycles = allActiveCycles.filter(c => {
       if (c.growing_area_id !== area.id) return false
       if (c.status !== 'seeding' && c.status !== 'growing') return false
-      if (c.planting_start_date && c.planting_start_date > todayStr) return false
       if (c.expected_harvest_date && c.expected_harvest_date < todayStr) return false
       return true
     })

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { Camera, ChevronRight, Download, History, Mail, Phone } from 'lucide-react'
+import { Camera, ChevronRight, Download, History, Mail, Phone, Search } from 'lucide-react'
 import Sidebar from '../../components/layout/Sidebar'
 import OrderStatusBadge from '../../components/orders/OrderStatusBadge'
+import OrderDateFilter, { filterOrdersByDate } from '../../components/orders/OrderDateFilter'
 import { getAllOrders, updateOrderStatus } from '../../api/orders'
 import { exportOrdersToExcel, exportOrdersToCSV } from '../../utils/csvExport'
 import {
@@ -23,9 +24,21 @@ const LABELS = {
   growing: 'ลงราง', ready: 'พร้อมส่ง', completed: 'เสร็จสิ้น', cancelled: 'ยกเลิก'
 }
 
+const CATEGORY_FILTERS = [
+  { value: 'all', label: 'ทั้งหมด' },
+  { value: 'vegetable', label: '🥬 ผักไฮโดรโปนิก' },
+  { value: 'equipment', label: '🌱 อุปกรณ์ & ชุดปลูก' },
+]
+
 export default function AdminOrders() {
   const [orders, setOrders] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [dateType, setDateType] = useState('pickup')
+  const [datePreset, setDatePreset] = useState('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { load() }, [])
@@ -40,7 +53,42 @@ export default function AdminOrders() {
     finally { setLoading(false) }
   }
 
-  const filtered = statusFilter ? orders.filter(o => o.status === statusFilter) : orders
+  const vegCount = useMemo(() => orders.filter(o => !isEquipmentOrder(o)).length, [orders])
+  const equipCount = useMemo(() => orders.filter(o => isEquipmentOrder(o)).length, [orders])
+
+  const filtered = useMemo(() => {
+    let result = orders
+
+    // 1. หมวดหมู่สินค้า
+    if (categoryFilter === 'equipment') {
+      result = result.filter(o => isEquipmentOrder(o))
+    } else if (categoryFilter === 'vegetable') {
+      result = result.filter(o => !isEquipmentOrder(o))
+    }
+
+    // 2. สถานะออเดอร์
+    if (statusFilter) {
+      result = result.filter(o => o.status === statusFilter)
+    }
+
+    // 3. คำค้นหา (Search)
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase().trim()
+      result = result.filter(o => {
+        const idMatch = o.id.toLowerCase().includes(q)
+        const nameMatch = getCustomerDisplayName(o).toLowerCase().includes(q)
+        const phoneMatch = getCustomerPhone(o).toLowerCase().includes(q)
+        const emailMatch = getCustomerEmail(o).toLowerCase().includes(q)
+        const itemsMatch = o.order_items?.some(i =>
+          i.vegetable_types?.name?.toLowerCase().includes(q)
+        )
+        return idMatch || nameMatch || phoneMatch || emailMatch || itemsMatch
+      })
+    }
+
+    // 4. ตัวกรองวันที่ (Date Filter)
+    return filterOrdersByDate(result, { dateType, datePreset, startDate, endDate })
+  }, [orders, categoryFilter, statusFilter, searchTerm, dateType, datePreset, startDate, endDate])
 
   async function handleStatus(id, status) {
     const o = orders.find(item => item.id === id)
@@ -58,42 +106,104 @@ export default function AdminOrders() {
       <Sidebar />
       <main className="ml-64 flex-1 p-5 lg:p-7">
         <div className="w-full">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
             <div>
               <h1 className="page-title">จัดการออเดอร์ทั้งหมด</h1>
               <p className="page-subtitle">ออเดอร์ที่กำลังดำเนินการอยู่</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Search Bar */}
+              <div className="relative w-full sm:w-60">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="ค้นหาชื่อลูกค้า, เลขออเดอร์..."
+                  className="input pl-9 text-xs w-full py-2"
+                />
+              </div>
+
               <button
                 type="button"
                 id="btn-export-orders-excel"
                 onClick={() => exportOrdersToExcel(filtered)}
                 disabled={filtered.length === 0}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                title="ส่งออกรายการออเดอร์เป็น Excel (.xlsx) จัดระเบียบความกว้างคอลัมน์ให้อ่านง่ายทันที"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title="ส่งออกรายการออเดอร์ที่กรองอยู่เป็น Excel (.xlsx)"
               >
                 <Download className="w-4 h-4 text-emerald-600" />
                 <span>ส่งออก Excel</span>
               </button>
               <Link
                 to="/admin/order-history"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-primary-50 hover:border-forest hover:text-forest transition-all shadow-sm"
               >
                 <History className="w-4 h-4" />
-                ประวัติการสั่งซื้อ
+                <span>ประวัติ</span>
               </Link>
             </div>
           </div>
 
-          <div className="flex gap-2 flex-wrap mb-6">
+          {/* Category Tabs */}
+          <div className="flex gap-2 mb-3 border-b border-gray-200 pb-2.5">
+            {CATEGORY_FILTERS.map(cat => {
+              const count =
+                cat.value === 'all' ? orders.length : cat.value === 'vegetable' ? vegCount : equipCount
+              return (
+                <button
+                  key={cat.value}
+                  onClick={() => setCategoryFilter(cat.value)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5
+                    ${categoryFilter === cat.value
+                      ? 'bg-forest text-white shadow-2xs'
+                      : 'bg-white text-gray-600 hover:bg-primary-50 border border-gray-200'
+                    }`}
+                >
+                  {cat.label}
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                      categoryFilter === cat.value
+                        ? 'bg-white/20 text-white'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Status Filters */}
+          <div className="flex gap-1.5 flex-wrap mb-4">
             {STATUSES.map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all
-                  ${statusFilter === s ? 'bg-forest text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-primary-50'}`}>
+                  ${statusFilter === s ? 'bg-forest text-white shadow-2xs' : 'bg-white text-gray-600 border border-gray-200 hover:bg-primary-50'}`}>
                 {LABELS[s]}
               </button>
             ))}
           </div>
+
+          {/* Date Filter Bar */}
+          <OrderDateFilter
+            dateType={dateType}
+            onDateTypeChange={setDateType}
+            datePreset={datePreset}
+            onDatePresetChange={setDatePreset}
+            startDate={startDate}
+            onStartDateChange={setStartDate}
+            endDate={endDate}
+            onEndDateChange={setEndDate}
+            onReset={() => {
+              setDatePreset('all')
+              setStartDate('')
+              setEndDate('')
+            }}
+            isHistory={false}
+            totalFilteredCount={filtered.length}
+          />
 
           <div className="table-wrapper">
             <table className="table w-full">
