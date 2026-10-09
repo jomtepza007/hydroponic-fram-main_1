@@ -109,8 +109,9 @@ export default function FarmerSchedule() {
           .then(({ data, error }) => { if (error) throw error; return data || [] }),
         supabase
           .from('growing_areas')
-          .select('*')
+          .select('*, vegetable_types(id, name)')
           .eq('is_active', true)
+          .order('name')
           .then(({ data, error }) => { if (error) throw error; return data || [] }),
       ])
 
@@ -146,16 +147,41 @@ export default function FarmerSchedule() {
     setSelectedOrderItem({ order, item })
     const harvestDays = item.vegetable_types?.harvest_days || 35
     const autoStart = calcPlantingStart(order.pickup_date, harvestDays)
-    setForm({ growing_area_id: growingAreas[0]?.id || '', planting_start_date: autoStart || '', notes: '' })
+
+    // คัดเลือกแปลงที่เหมาะสมที่สุดตาม Waterfall Model:
+    // 1. แปลงเฉพาะที่ตรงกับชนิดผักนี้
+    // 2. ถ้าไม่มีแปลงเฉพาะ ให้เลือกแปลงรวม (ที่ปลูกได้ทุกผัก)
+    const targetVegId = item.vegetable_type_id
+    const dedicatedArea = growingAreas.find(a => a.vegetable_type_id && a.vegetable_type_id === targetVegId)
+    const sharedArea = growingAreas.find(a => !a.vegetable_type_id)
+    const bestArea = dedicatedArea || sharedArea || growingAreas[0]
+
+    setForm({
+      growing_area_id: bestArea?.id || '',
+      planting_start_date: autoStart || '',
+      notes: ''
+    })
     setShowModal(true)
   }
 
   async function handleCreate(e) {
     e.preventDefault()
     if (!selectedOrderItem) return
+
+    const { order, item } = selectedOrderItem
+
+    // ตรวจสอบความถูกต้องของพื้นที่ปลูก (Area Compatibility Validation)
+    if (form.growing_area_id) {
+      const selectedArea = growingAreas.find(a => a.id === form.growing_area_id)
+      if (selectedArea?.vegetable_type_id && selectedArea.vegetable_type_id !== item.vegetable_type_id) {
+        const dedicatedName = selectedArea.vegetable_types?.name || 'ผักชนิดอื่น'
+        toast.error(`ไม่สามารถสร้างรอบปลูกได้: แปลง ${selectedArea.name} ถูกจำกัดไว้สำหรับปลูก "${dedicatedName}" เท่านั้น`)
+        return
+      }
+    }
+
     setSaving(true)
     try {
-      const { order, item } = selectedOrderItem
       const harvestDays = item.vegetable_types?.harvest_days || 35
       const expectedHarvest = calcExpectedHarvest(form.planting_start_date, harvestDays)
 
@@ -412,19 +438,82 @@ export default function FarmerSchedule() {
 
               {/* พื้นที่ปลูก */}
               <div>
-                <label className="label">พื้นที่ปลูก</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="label mb-0">พื้นที่ปลูก</label>
+                  <span className="text-[11px] text-gray-500">
+                    ผัก: <strong className="text-forest">{selectedOrderItem.item.vegetable_types?.name}</strong>
+                  </span>
+                </div>
                 <select
                   value={form.growing_area_id}
                   onChange={e => setForm(s => ({ ...s, growing_area_id: e.target.value }))}
                   className="input"
                 >
                   <option value="">— ไม่ระบุ —</option>
-                  {growingAreas.map(area => (
-                    <option key={area.id} value={area.id}>
-                      {area.name}{area.zone_code ? ` (${area.zone_code})` : ''}
-                    </option>
-                  ))}
+                  {growingAreas
+                    .slice()
+                    .sort((a, b) => {
+                      const targetId = selectedOrderItem.item.vegetable_type_id
+                      const aScore = a.vegetable_type_id === targetId ? 1 : (!a.vegetable_type_id ? 2 : 3)
+                      const bScore = b.vegetable_type_id === targetId ? 1 : (!b.vegetable_type_id ? 2 : 3)
+                      if (aScore !== bScore) return aScore - bScore
+                      return (a.name || '').localeCompare(b.name || '')
+                    })
+                    .map(area => {
+                      const targetId = selectedOrderItem.item.vegetable_type_id
+                      const isDedicatedThis = area.vegetable_type_id && area.vegetable_type_id === targetId
+                      const isShared = !area.vegetable_type_id
+                      const isDedicatedOther = area.vegetable_type_id && area.vegetable_type_id !== targetId
+                      const otherVegName = area.vegetable_types?.name || 'ผักชนิดอื่น'
+
+                      let label = `แปลง ${area.name}${area.zone_code ? ` (${area.zone_code})` : ''}`
+                      if (isDedicatedThis) {
+                        label += ` — 🌱 แปลงเฉพาะ: ${selectedOrderItem.item.vegetable_types?.name || 'ผักนี้'} (แนะนำ)`
+                      } else if (isShared) {
+                        label += ` — 🌐 แปลงรวม (ปลูกได้ทุกผัก)`
+                      } else if (isDedicatedOther) {
+                        label += ` — ❌ แปลงเฉพาะ: ${otherVegName} (ไม่รองรับ)`
+                      }
+
+                      return (
+                        <option
+                          key={area.id}
+                          value={area.id}
+                          disabled={isDedicatedOther}
+                          className={isDedicatedOther ? 'text-gray-400 bg-gray-50' : ''}
+                        >
+                          {label}
+                        </option>
+                      )
+                    })}
                 </select>
+
+                {/* Status indicator under select */}
+                {(() => {
+                  if (!form.growing_area_id) return null
+                  const curArea = growingAreas.find(a => a.id === form.growing_area_id)
+                  if (!curArea) return null
+                  const targetId = selectedOrderItem.item.vegetable_type_id
+                  if (curArea.vegetable_type_id === targetId) {
+                    return (
+                      <p className="text-[11px] text-emerald-600 mt-1.5 flex items-center gap-1 font-medium">
+                        ✓ แปลงเฉพาะตรงตามชนิดผัก ({curArea.vegetable_types?.name || 'ผักนี้'})
+                      </p>
+                    )
+                  }
+                  if (!curArea.vegetable_type_id) {
+                    return (
+                      <p className="text-[11px] text-blue-600 mt-1.5 flex items-center gap-1 font-medium">
+                        ℹ แปลงรวม (Waterfall Model) รองรับการปลูกผักทุกชนิด
+                      </p>
+                    )
+                  }
+                  return (
+                    <p className="text-[11px] text-rose-600 mt-1.5 flex items-center gap-1 font-semibold">
+                      ⚠️ แปลงนี้ถูกจำกัดไว้สำหรับ "{curArea.vegetable_types?.name}" เท่านั้น
+                    </p>
+                  )
+                })()}
               </div>
 
               {/* หมายเหตุ */}
